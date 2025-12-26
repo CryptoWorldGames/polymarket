@@ -60,20 +60,15 @@
 <body>
   <h1>Polymarket Signal Scanner</h1>
   <p style="color: #8b949e; margin-bottom: 30px;">Paste full Polymarket URL → Auto-updates every 15s</p>
-
   <div id="input-section">
-    <input type="text" id="marketInput" placeholder="Paste full URL (e.g. https://polymarket.com/event/bitcoin-up-or-down-december-26-5am-et)" />
+    <input type="text" id="marketInput" placeholder="Paste full URL (e.g. https://polymarket.com/event/highest-grossing-movie-in-2025)" />
     <button onclick="analyzeMarket()">Analyze</button>
   </div>
-
   <div id="result" class="no-buy">Paste URL and press Analyze or Enter</div>
-
   <p id="status">Waiting for input...</p>
-
   <script>
     const PROXY = "https://api.allorigins.win/raw?url=";
     const API_BASE = "https://gamma-api.polymarket.com";
-
     function extractSlug(input) {
       input = input.trim();
       input = input.split("?")[0].split("#")[0].replace(/\/$/, '');
@@ -82,65 +77,66 @@
       }
       return input;
     }
-
     async function fetchWithProxy(url) {
       try {
         const res = await fetch(PROXY + encodeURIComponent(url));
         if (!res.ok) return null;
         return await res.json();
-      } catch {
+      } catch (e) {
+        console.error(e);
         return null;
       }
     }
-
     async function fetchMarket(slug) {
       const url = `${API_BASE}/markets?slug=${encodeURIComponent(slug)}`;
       const data = await fetchWithProxy(url);
       return data ? data[0] : null;
     }
-
     function getRecommendation(yesPrice) {
       if (yesPrice >= 0.70) return { text: "BUY UP", class: "buy-up" };
       if (yesPrice <= 0.30) return { text: "BUY DOWN", class: "buy-down" };
       if (yesPrice >= 0.45 && yesPrice <= 0.55) return { text: "DON'T BUY", class: "no-buy" };
       return { text: "NO EDGE", class: "no-edge" };
     }
-
     async function analyzeMarket() {
       const input = document.getElementById("marketInput").value.trim();
       if (!input) {
         document.getElementById("status").textContent = "Please paste a full URL";
         return;
       }
-
       const slug = extractSlug(input);
       document.getElementById("status").textContent = `Analyzing: ${slug}...`;
       document.getElementById("result").textContent = "Loading...";
       document.getElementById("result").className = "no-buy";
-
       const market = await fetchMarket(slug);
-      if (!market || !market.outcomePrices || market.outcomePrices.length !== 2) {
-        document.getElementById("status").textContent = "Market not found or not binary";
+      if (!market) {
+        document.getElementById("status").textContent = "Market not found or API error";
         document.getElementById("result").textContent = "Invalid market";
         document.getElementById("result").className = "no-buy";
         return;
       }
-
-      const yesPrice = parseFloat(market.outcomePrices[0] || 0); // Up/Yes is first
+      let prices = market.outcomePrices;
+      if (typeof prices === 'string') {
+        try { prices = JSON.parse(prices); } catch { prices = []; }
+      } else if (!Array.isArray(prices)) { prices = []; }
+      if (prices.length !== 2) {
+        document.getElementById("status").textContent = "Not a binary market or bad data";
+        document.getElementById("result").textContent = "Invalid market";
+        document.getElementById("result").className = "no-buy";
+        return;
+      }
+      const yesPrice = parseFloat(prices[0] || 0);
       const rec = getRecommendation(yesPrice);
-
       document.getElementById("result").textContent = rec.text;
       document.getElementById("result").className = rec.class;
-      document.getElementById("status").textContent = 
-        `Market: ${market.question || market.title} | Yes (Up): ${(yesPrice * 100).toFixed(1)}% | Updated: ${new Date().toLocaleTimeString()}`;
+      const volume = market.volume ? `Volume: $${(market.volume / 1000000).toFixed(1)}M` : '';
+      document.getElementById("status").textContent =
+        `Market: ${market.question || market.title} | Yes (Up): ${(yesPrice * 100).toFixed(1)}% ${volume} | Updated: ${new Date().toLocaleTimeString()}`;
     }
-
-    // Auto-refresh every 15 seconds if slug is set
     setInterval(() => {
       const input = document.getElementById("marketInput").value.trim();
       if (input) analyzeMarket();
     }, 15000);
-
     document.getElementById("marketInput").addEventListener("keypress", e => {
       if (e.key === "Enter") analyzeMarket();
     });
