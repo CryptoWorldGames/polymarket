@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Polymarket GPT Bot Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!--
+    File: gptbot.html
+    Version: v0001
+    Purpose: Auto-scanning Polymarket 95%+ markets with AI research + desktop alerts
+  -->
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      margin: 20px;
+      text-align: center;
+    }
+    h1 { color: #58a6ff; }
+    input, button {
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      margin: 6px;
+      background: #161b22;
+      color: #e6edf3;
+    }
+    button {
+      cursor: pointer;
+      background: #238636;
+      border: none;
+    }
+    button.stop {
+      background: #da3633;
+    }
+    table {
+      width: 95%;
+      margin: 20px auto;
+      border-collapse: collapse;
+      background: #161b22;
+    }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid #30363d;
+      text-align: left;
+    }
+    th { background: #1f6feb; }
+    a { color: #58a6ff; text-decoration: none; }
+    footer {
+      margin-top: 60px;
+      font-size: 12px;
+      color: #6e7681;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Polymarket GPT Bot Scanner</h1>
+
+  <p>Scans every 60 seconds for 95%+ markets and performs AI research.</p>
+
+  <input type="text" id="apiKeyInput" placeholder="Paste OpenAI API key" size="40" />
+
+  <br/>
+
+  <button id="startBtn">START SCANNER</button>
+  <button id="stopBtn" class="stop" disabled>STOP SCANNER</button>
+
+  <p id="status">Scanner stopped.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Market</th>
+        <th>Side</th>
+        <th>Probability</th>
+        <th>AI Verdict</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="results"></tbody>
+  </table>
+
+  <footer>gptbot.html v0001</footer>
+
+<script>
+const PROXY = "https://api.allorigins.win/raw?url=";
+const API_BASE = "https://gamma-api.polymarket.com";
+const SCAN_INTERVAL = 60000;
+
+let scannerInterval = null;
+let seenMarkets = new Set();
+let apiKey = "";
+
+async function fetchJSON(url) {
+  try {
+    const res = await fetch(PROXY + encodeURIComponent(url));
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchMarkets() {
+  const url = `${API_BASE}/markets?limit=500&active=true&closed=false`;
+  return await fetchJSON(url) || [];
+}
+
+async function aiResearch(question) {
+  if (!apiKey) return "No API key";
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "user",
+            content:
+              `Research latest news and facts. Is this outcome almost certain? Answer briefly with risk assessment:\n\n"${question}"`
+          }
+        ]
+      })
+    });
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || "AI error";
+  } catch {
+    return "AI request failed";
+  }
+}
+
+function notify(title, body) {
+  if (Notification.permission === "granted") {
+    new Notification(title, { body });
+  }
+}
+
+async function scan() {
+  document.getElementById("status").textContent =
+    "Scanning... " + new Date().toLocaleTimeString();
+
+  const markets = await fetchMarkets();
+  const table = document.getElementById("results");
+
+  for (const m of markets) {
+    let prices = m.outcomePrices;
+    if (typeof prices === "string") {
+      try { prices = JSON.parse(prices); } catch { continue; }
+    }
+    if (!Array.isArray(prices) || prices.length !== 2) continue;
+
+    const yes = parseFloat(prices[0]);
+    const no = parseFloat(prices[1]);
+
+    let side = null;
+    let prob = 0;
+
+    if (yes >= 0.95) { side = "YES"; prob = yes; }
+    else if (no >= 0.95) { side = "NO"; prob = no; }
+    else continue;
+
+    if (seenMarkets.has(m.slug)) continue;
+    seenMarkets.add(m.slug);
+
+    const verdict = await aiResearch(m.question || m.title);
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${m.question || m.title}</td>
+      <td>${side}</td>
+      <td>${(prob * 100).toFixed(1)}%</td>
+      <td>${verdict}</td>
+      <td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>
+    `;
+    table.prepend(row);
+
+    notify(
+      "New 95%+ Polymarket Market",
+      `${side} ${(prob * 100).toFixed(1)}%\n${verdict}`
+    );
+  }
+}
+
+document.getElementById("startBtn").onclick = async () => {
+  apiKey = document.getElementById("apiKeyInput").value.trim();
+  if (!apiKey) {
+    alert("Paste your OpenAI API key first.");
+    return;
+  }
+
+  if (Notification.permission !== "granted") {
+    await Notification.requestPermission();
+  }
+
+  if (scannerInterval) return;
+
+  scan();
+  scannerInterval = setInterval(scan, SCAN_INTERVAL);
+
+  document.getElementById("status").textContent = "Scanner running...";
+  document.getElementById("startBtn").disabled = true;
+  document.getElementById("stopBtn").disabled = false;
+};
+
+document.getElementById("stopBtn").onclick = () => {
+  clearInterval(scannerInterval);
+  scannerInterval = null;
+  document.getElementById("status").textContent = "Scanner stopped.";
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+};
+</script>
+
+</body>
+</html>
