@@ -3,72 +3,66 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Polymarket Signal Scanner</title>
+  <title>Polymarket Profit Scanner</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-      background: #0d1117;
-      color: #e6edf3;
-      text-align: center;
-    }
+    body { font-family: Arial, sans-serif; margin: 20px; background: #0d1117; color: #e6edf3; text-align: center; }
     h1 { color: #58a6ff; margin-bottom: 10px; }
-    input[type="text"] {
-      width: 700px;
-      max-width: 90%;
-      padding: 14px;
-      font-size: 16px;
-      border: 2px solid #30363d;
-      background: #161b22;
-      color: #e6edf3;
-      border-radius: 8px;
-      box-sizing: border-box;
-    }
-    button {
-      padding: 14px 24px;
-      font-size: 16px;
-      margin-left: 12px;
-      background: #238636;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      margin-top: 10px;
-    }
+    h2 { color: #8b9dff; margin: 40px 0 20px; }
+    input[type="text"], select { width: 300px; padding: 14px; font-size: 16px; border: 2px solid #30363d; background: #161b22; color: #e6edf3; border-radius: 8px; box-sizing: border-box; margin: 10px; }
+    button { padding: 14px 24px; font-size: 16px; background: #238636; color: white; border: none; border-radius: 8px; cursor: pointer; }
     button:hover { background: #2ea043; }
-    #result {
-      margin: 30px auto;
-      padding: 40px;
-      font-size: 60px;
-      font-weight: bold;
-      border-radius: 12px;
-      max-width: 900px;
-      min-height: 140px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.4s;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-    }
-    .buy-up { background: #2ea043; color: white; }
-    .buy-down { background: #da2e2e; color: white; }
-    .no-buy { background: #444c56; color: #8b949e; }
-    .no-edge { background: #444c56; color: #8b949e; }
-    #status { font-size: 18px; color: #8b949e; margin: 20px 0; }
+    table { width: 95%; margin: 20px auto; border-collapse: collapse; background: #161b22; border: 1px solid #30363d; font-size: 15px; }
+    th, td { padding: 14px; text-align: left; border-bottom: 1px solid #30363d; }
+    th { background: #1f6feb; }
+    .link { color: #58a6ff; text-decoration: none; }
+    .link:hover { text-decoration: underline; }
+    #status, #scanStatus { font-size: 18px; color: #8b949e; margin: 20px 0; }
+    footer { margin-top: 100px; font-size: 12px; color: #6e7681; }
   </style>
 </head>
 <body>
-  <h1>Polymarket Signal Scanner</h1>
-  <p style="color: #8b949e; margin-bottom: 30px;">Paste full Polymarket URL → Auto-updates every 15s</p>
-  <div id="input-section">
-    <input type="text" id="marketInput" placeholder="Paste full URL (e.g. https://polymarket.com/event/highest-grossing-movie-in-2025)" />
-    <button onclick="analyzeMarket()">Analyze</button>
-  </div>
-  <div id="result" class="no-buy">Paste URL and press Analyze or Enter</div>
-  <p id="status">Waiting for input...</p>
+  <h1>Polymarket Profit Scanner</h1>
+  <p style="color: #8b949e; margin-bottom: 30px;">Scan for high-probability "almost 100%" markets. Enter threshold and time filter, then scan.</p>
+  
+  <input type="text" id="apiKeyInput" placeholder="Paste OpenAI API key for research (optional)" />
+  
+  <h2>Single Market Analyzer</h2>
+  <input type="text" id="marketInput" placeholder="Paste full URL for single market" />
+  <button onclick="analyzeMarket()">Analyze</button>
+  <div id="result" style="margin: 30px auto; padding: 40px; font-size: 60px; font-weight: bold; border-radius: 12px; max-width: 900px; min-height: 140px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3);" class="no-buy">Paste URL and press Analyze</div>
+  <p id="singleStatus">Waiting...</p>
+  
+  <h2>Full Scanner</h2>
+  <input type="text" id="thresholdInput" placeholder="Probability threshold (e.g. 95)" value="95" />
+  <select id="timeFilter">
+    <option value="900000">Within 15 min</option>
+    <option value="3600000">Within 1 hour</option>
+    <option value="14400000">Within 4 hours</option>
+    <option value="86400000">Within 1 day</option>
+    <option value="0" selected>Any time</option>
+  </select>
+  <button onclick="scanMarkets()">Scan Now</button>
+  <p id="scanStatus">Waiting for scan...</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Bet Side (Prob)</th>
+        <th>Volume</th>
+        <th>Time Left</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="scanTable"></tbody>
+  </table>
+
+  <footer>v0001</footer>
+
   <script>
     const PROXY = "https://api.allorigins.win/raw?url=";
     const API_BASE = "https://gamma-api.polymarket.com";
+    let apiKey = "";
+    
     function extractSlug(input) {
       input = input.trim();
       input = input.split("?")[0].split("#")[0].replace(/\/$/, '');
@@ -77,6 +71,7 @@
       }
       return input;
     }
+    
     async function fetchWithProxy(url) {
       try {
         const res = await fetch(PROXY + encodeURIComponent(url));
@@ -87,59 +82,111 @@
         return null;
       }
     }
+    
     async function fetchMarket(slug) {
       const url = `${API_BASE}/markets?slug=${encodeURIComponent(slug)}`;
       const data = await fetchWithProxy(url);
       return data ? data[0] : null;
     }
+    
+    async function fetchAllMarkets() {
+      const url = `${API_BASE}/markets?limit=500&active=true&closed=false`;
+      return await fetchWithProxy(url) || [];
+    }
+    
     function getRecommendation(yesPrice) {
       if (yesPrice >= 0.70) return { text: "BUY UP", class: "buy-up" };
       if (yesPrice <= 0.30) return { text: "BUY DOWN", class: "buy-down" };
       if (yesPrice >= 0.45 && yesPrice <= 0.55) return { text: "DON'T BUY", class: "no-buy" };
       return { text: "NO EDGE", class: "no-edge" };
     }
+    
+    async function researchWithAI(question) {
+      apiKey = document.getElementById("apiKeyInput").value.trim();
+      if (!apiKey) return "No API key";
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: "gpt-4",
+            messages: [{ role: "user", content: `Search latest news and assess if "${question}" is almost 100% certain. 1 sentence summary.` }]
+          })
+        });
+        const data = await res.json();
+        return data.choices[0].message.content || "AI error";
+      } catch (e) {
+        return "Research failed";
+      }
+    }
+    
     async function analyzeMarket() {
       const input = document.getElementById("marketInput").value.trim();
-      if (!input) {
-        document.getElementById("status").textContent = "Please paste a full URL";
-        return;
-      }
+      if (!input) return document.getElementById("singleStatus").textContent = "Paste URL";
       const slug = extractSlug(input);
-      document.getElementById("status").textContent = `Analyzing: ${slug}...`;
-      document.getElementById("result").textContent = "Loading...";
-      document.getElementById("result").className = "no-buy";
+      document.getElementById("singleStatus").textContent = `Analyzing: ${slug}...`;
+      const resultDiv = document.getElementById("result");
+      resultDiv.textContent = "Loading...";
+      resultDiv.className = "no-buy";
       const market = await fetchMarket(slug);
-      if (!market) {
-        document.getElementById("status").textContent = "Market not found or API error";
-        document.getElementById("result").textContent = "Invalid market";
-        document.getElementById("result").className = "no-buy";
-        return;
-      }
+      if (!market) return document.getElementById("singleStatus").textContent = "Not found";
       let prices = market.outcomePrices;
-      if (typeof prices === 'string') {
-        try { prices = JSON.parse(prices); } catch { prices = []; }
-      } else if (!Array.isArray(prices)) { prices = []; }
-      if (prices.length !== 2) {
-        document.getElementById("status").textContent = "Not a binary market or bad data";
-        document.getElementById("result").textContent = "Invalid market";
-        document.getElementById("result").className = "no-buy";
-        return;
-      }
+      if (typeof prices === 'string') try { prices = JSON.parse(prices); } catch { prices = []; }
+      if (!Array.isArray(prices) || prices.length !== 2) return document.getElementById("singleStatus").textContent = "Invalid binary";
       const yesPrice = parseFloat(prices[0] || 0);
       const rec = getRecommendation(yesPrice);
-      document.getElementById("result").textContent = rec.text;
-      document.getElementById("result").className = rec.class;
+      resultDiv.textContent = rec.text;
+      resultDiv.className = rec.class;
       const volume = market.volume ? `Volume: $${(market.volume / 1000000).toFixed(1)}M` : '';
-      document.getElementById("status").textContent =
-        `Market: ${market.question || market.title} | Yes (Up): ${(yesPrice * 100).toFixed(1)}% ${volume} | Updated: ${new Date().toLocaleTimeString()}`;
+      let statusText = `Market: ${market.question || market.title} | Yes: ${(yesPrice * 100).toFixed(1)}% ${volume}`;
+      if (yesPrice >= 0.90 || yesPrice <= 0.10) {
+        statusText += " | Researching...";
+        document.getElementById("singleStatus").textContent = statusText;
+        const aiVerdict = await researchWithAI(market.question || market.title);
+        statusText += ` | AI: ${aiVerdict}`;
+      }
+      document.getElementById("singleStatus").textContent = statusText;
     }
-    setInterval(() => {
-      const input = document.getElementById("marketInput").value.trim();
-      if (input) analyzeMarket();
-    }, 15000);
-    document.getElementById("marketInput").addEventListener("keypress", e => {
-      if (e.key === "Enter") analyzeMarket();
-    });
+    
+    async function scanMarkets() {
+      const threshold = parseFloat(document.getElementById("thresholdInput").value.trim()) / 100 || 0.95;
+      const timeMs = parseInt(document.getElementById("timeFilter").value) || 0;
+      document.getElementById("scanStatus").textContent = "Scanning all markets...";
+      const tableBody = document.getElementById("scanTable");
+      tableBody.innerHTML = "";
+      const markets = await fetchAllMarkets();
+      const now = Date.now();
+      let found = 0;
+      markets.forEach(m => {
+        let prices = m.outcomePrices;
+        if (typeof prices === 'string') try { prices = JSON.parse(prices); } catch { return; }
+        if (!Array.isArray(prices) || prices.length !== 2) return;
+        const yes = parseFloat(prices[0] || 0);
+        const no = parseFloat(prices[1] || 0);
+        const endTime = new Date(m.endDate || m.closingDate).getTime();
+        if (isNaN(endTime)) return;
+        const timeLeftMs = endTime - now;
+        if (timeMs > 0 && timeLeftMs > timeMs) return;
+        let side = '';
+        let prob = 0;
+        if (yes >= threshold) { side = 'Yes'; prob = yes; }
+        else if (no >= threshold) { side = 'No'; prob = no; }
+        if (!side) return;
+        found++;
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${m.question || m.title}</td>
+          <td>${side} (${(prob * 100).toFixed(1)}%)</td>
+          <td>$${(m.volume / 1000000 || 0).toFixed(1)}M</td>
+          <td>${timeLeftMs > 0 ? (timeLeftMs / 3600000).toFixed(1) + 'h' : 'Soon'}</td>
+          <td><a href="https://polymarket.com/event/${m.slug}" target="_blank" class="link">Open →</a></td>
+        `;
+        tableBody.appendChild(row);
+      });
+      document.getElementById("scanStatus").textContent = found ? `Found ${found} high-prob markets!` : "No matches — lower threshold or extend time.";
+    }
+    
+    document.getElementById("marketInput").addEventListener("keypress", e => { if (e.key === "Enter") analyzeMarket(); });
   </script>
 </body>
 </html>
