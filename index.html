@@ -1,119 +1,149 @@
-<script>
-  const PROXY = "https://api.allorigins.win/raw?url=";
-  const API_BASE = "https://gamma-api.polymarket.com";
-  let currentSlug = "";
-
-  function extractSlug(input) {
-    input = input.trim();
-    input = input.split("?")[0].split("#")[0].replace(/\/$/, '');
-    if (input.includes("/event/")) {
-      return input.split("/event/")[1];
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Polymarket Signal Scanner</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #0d1117;
+      color: #e6edf3;
+      text-align: center;
     }
-    return input;
-  }
-
-  async function fetchWithProxy(url) {
-    try {
-      const response = await fetch(PROXY + encodeURIComponent(url));
-      if (!response.ok) return null;
-      return await response.json();
-    } catch {
-      return null;
+    h1 { color: #58a6ff; margin-bottom: 10px; }
+    input[type="text"] {
+      width: 700px;
+      max-width: 90%;
+      padding: 14px;
+      font-size: 16px;
+      border: 2px solid #30363d;
+      background: #161b22;
+      color: #e6edf3;
+      border-radius: 8px;
+      box-sizing: border-box;
     }
-  }
-
-  async function fetchMarket(slug) {
-    const url = `${API_BASE}/markets?slug=${encodeURIComponent(slug)}`;
-    return await fetchWithProxy(url).then(data => data ? data[0] : null);
-  }
-
-  async function fetchAllMarkets() {
-    const url = `${API_BASE}/markets?limit=500&active=true&closed=false`;
-    return await fetchWithProxy(url) || [];
-  }
-
-  function getRecommendation(yesPrice) {
-    if (yesPrice >= 0.70) return { text: "BUY UP", class: "buy-up" };
-    if (yesPrice <= 0.30) return { text: "BUY DOWN", class: "buy-down" };
-    if (yesPrice >= 0.45 && yesPrice <= 0.55) return { text: "DON'T BUY", class: "no-buy" };
-    return { text: "NO EDGE", class: "no-edge" };
-  }
-
-  async function analyzeMarket() {
-    const input = document.getElementById("marketInput").value.trim();
-    if (!input) {
-      document.getElementById("status").textContent = "Please paste the full URL";
-      return;
+    button {
+      padding: 14px 24px;
+      font-size: 16px;
+      margin-left: 12px;
+      background: #238636;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 10px;
     }
-
-    currentSlug = extractSlug(input);
-    document.getElementById("status").textContent = `Analyzing: ${currentSlug}...`;
-    document.getElementById("result").textContent = "Loading...";
-    document.getElementById("result").className = "no-buy";
-
-    const market = await fetchMarket(currentSlug);
-    if (!market) {
-      document.getElementById("status").textContent = "Market not found";
-      document.getElementById("result").textContent = "Invalid market";
-      document.getElementById("result").className = "no-buy";
-      return;
+    button:hover { background: #2ea043; }
+    #result {
+      margin: 30px auto;
+      padding: 40px;
+      font-size: 60px;
+      font-weight: bold;
+      border-radius: 12px;
+      max-width: 900px;
+      min-height: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.4s;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
+    .buy-up { background: #2ea043; color: white; }
+    .buy-down { background: #da2e2e; color: white; }
+    .no-buy { background: #444c56; color: #8b949e; }
+    .no-edge { background: #444c56; color: #8b949e; }
+    #status { font-size: 18px; color: #8b949e; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <h1>Polymarket Signal Scanner</h1>
+  <p style="color: #8b949e; margin-bottom: 30px;">Paste full Polymarket URL → Auto-updates every 15s</p>
 
-    const outcomes = market.outcomePrices || [];
-    if (outcomes.length !== 2) {
-      document.getElementById("status").textContent = "Not a binary market";
-      document.getElementById("result").textContent = "Invalid market";
-      document.getElementById("result").className = "no-buy";
-      return;
-    }
+  <div id="input-section">
+    <input type="text" id="marketInput" placeholder="Paste full URL (e.g. https://polymarket.com/event/bitcoin-up-or-down-december-26-5am-et)" />
+    <button onclick="analyzeMarket()">Analyze</button>
+  </div>
 
-    const yesPrice = parseFloat(outcomes[0] || 0); // Up/Yes is first
-    const rec = getRecommendation(yesPrice);
+  <div id="result" class="no-buy">Paste URL and press Analyze or Enter</div>
 
-    document.getElementById("result").textContent = rec.text;
-    document.getElementById("result").className = rec.class;
-    document.getElementById("status").textContent = 
-      `Market: ${market.question || market.title} | Yes (Up): ${(yesPrice * 100).toFixed(1)}% | Updated: ${new Date().toLocaleTimeString()}`;
-  }
+  <p id="status">Waiting for input...</p>
 
-  async function scanForArb() {
-    const markets = await fetchAllMarkets();
-    const tableBody = document.getElementById("arbTable");
-    tableBody.innerHTML = "";
+  <script>
+    const PROXY = "https://api.allorigins.win/raw?url=";
+    const API_BASE = "https://gamma-api.polymarket.com";
 
-    let found = false;
-    markets.forEach(m => {
-      const outcomes = m.outcomePrices || [];
-      if (outcomes.length !== 2) return;
-
-      const yesP = parseFloat(outcomes[0] || 0);
-      const noP = parseFloat(outcomes[1] || 0);
-      const total = yesP + noP;
-
-      if (total < 0.99) {
-        found = true;
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${m.question || m.title}</td>
-          <td>${(yesP * 100).toFixed(1)}%</td>
-          <td>${(noP * 100).toFixed(1)}%</td>
-          <td class="arb">${(total * 100).toFixed(1)}%</td>
-          <td><a href="https://polymarket.com/event/${m.slug}" target="_blank" class="link">Open</a></td>
-        `;
-        tableBody.appendChild(row);
+    function extractSlug(input) {
+      input = input.trim();
+      input = input.split("?")[0].split("#")[0].replace(/\/$/, '');
+      if (input.includes("/event/")) {
+        return input.split("/event/")[1];
       }
+      return input;
+    }
+
+    async function fetchWithProxy(url) {
+      try {
+        const res = await fetch(PROXY + encodeURIComponent(url));
+        if (!res.ok) return null;
+        return await res.json();
+      } catch {
+        return null;
+      }
+    }
+
+    async function fetchMarket(slug) {
+      const url = `${API_BASE}/markets?slug=${encodeURIComponent(slug)}`;
+      const data = await fetchWithProxy(url);
+      return data ? data[0] : null;
+    }
+
+    function getRecommendation(yesPrice) {
+      if (yesPrice >= 0.70) return { text: "BUY UP", class: "buy-up" };
+      if (yesPrice <= 0.30) return { text: "BUY DOWN", class: "buy-down" };
+      if (yesPrice >= 0.45 && yesPrice <= 0.55) return { text: "DON'T BUY", class: "no-buy" };
+      return { text: "NO EDGE", class: "no-edge" };
+    }
+
+    async function analyzeMarket() {
+      const input = document.getElementById("marketInput").value.trim();
+      if (!input) {
+        document.getElementById("status").textContent = "Please paste a full URL";
+        return;
+      }
+
+      const slug = extractSlug(input);
+      document.getElementById("status").textContent = `Analyzing: ${slug}...`;
+      document.getElementById("result").textContent = "Loading...";
+      document.getElementById("result").className = "no-buy";
+
+      const market = await fetchMarket(slug);
+      if (!market || !market.outcomePrices || market.outcomePrices.length !== 2) {
+        document.getElementById("status").textContent = "Market not found or not binary";
+        document.getElementById("result").textContent = "Invalid market";
+        document.getElementById("result").className = "no-buy";
+        return;
+      }
+
+      const yesPrice = parseFloat(market.outcomePrices[0] || 0); // Up/Yes is first
+      const rec = getRecommendation(yesPrice);
+
+      document.getElementById("result").textContent = rec.text;
+      document.getElementById("result").className = rec.class;
+      document.getElementById("status").textContent = 
+        `Market: ${market.question || market.title} | Yes (Up): ${(yesPrice * 100).toFixed(1)}% | Updated: ${new Date().toLocaleTimeString()}`;
+    }
+
+    // Auto-refresh every 15 seconds if slug is set
+    setInterval(() => {
+      const input = document.getElementById("marketInput").value.trim();
+      if (input) analyzeMarket();
+    }, 15000);
+
+    document.getElementById("marketInput").addEventListener("keypress", e => {
+      if (e.key === "Enter") analyzeMarket();
     });
-
-    document.getElementById("arb-status").textContent = found 
-      ? "⚠️ Mismatch(s) found! (check red percentages)"
-      : `No mismatches found. Last scan: ${new Date().toLocaleTimeString()}`;
-  }
-
-  setInterval(() => { if (currentSlug) analyzeMarket(); }, 15000);
-  setInterval(scanForArb, 15000);
-  scanForArb();
-
-  document.getElementById("marketInput").addEventListener("keypress", e => {
-    if (e.key === "Enter") analyzeMarket();
-  });
-</script>
+  </script>
+</body>
+</html>
