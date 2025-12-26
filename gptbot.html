@@ -1,194 +1,230 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Polymarket GPT Bot Scanner</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8" />
+<title>Polymarket GPT Bot Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!--
-    File: gptbot.html
-    Version: v0002
-    Changes:
-    - Added threshold selector (90 / 95 / 98)
-    - Added live scan + AI status indicators
-    - Added AI call counter
-    - Improved logging so you KNOW it’s working
-  -->
+<!--
+File: gptbot.html
+Version: v0003
+Purpose:
+- Browser-only Polymarket scanner
+- Category filters via checkboxes
+- Hard AI rate limit (1 call / 5s)
+- Safer notifications + API protection
+-->
 
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      margin: 20px;
-      text-align: center;
-    }
-    h1 { color: #58a6ff; }
-    input, select, button {
-      padding: 12px;
-      font-size: 16px;
-      border-radius: 8px;
-      border: 1px solid #30363d;
-      margin: 6px;
-      background: #161b22;
-      color: #e6edf3;
-    }
-    button {
-      cursor: pointer;
-      background: #238636;
-      border: none;
-    }
-    button.stop {
-      background: #da3633;
-    }
-    .status-box {
-      margin: 20px auto;
-      max-width: 800px;
-      background: #161b22;
-      padding: 16px;
-      border-radius: 12px;
-      text-align: left;
-      font-size: 14px;
-    }
-    table {
-      width: 95%;
-      margin: 20px auto;
-      border-collapse: collapse;
-      background: #161b22;
-    }
-    th, td {
-      padding: 12px;
-      border-bottom: 1px solid #30363d;
-      text-align: left;
-    }
-    th { background: #1f6feb; }
-    a { color: #58a6ff; text-decoration: none; }
-    footer {
-      margin-top: 60px;
-      font-size: 12px;
-      color: #6e7681;
-    }
-  </style>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  margin: 20px;
+  text-align: center;
+}
+h1 { color: #58a6ff; }
+input, select, button, label {
+  font-size: 14px;
+}
+input, select {
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #161b22;
+  color: #e6edf3;
+}
+button {
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  margin: 5px;
+}
+.start { background: #238636; color: #fff; }
+.stop { background: #da3633; color: #fff; }
+.panel {
+  max-width: 900px;
+  margin: 20px auto;
+  background: #161b22;
+  padding: 15px;
+  border-radius: 12px;
+  text-align: left;
+}
+.filters label {
+  margin-right: 12px;
+}
+table {
+  width: 95%;
+  margin: 20px auto;
+  border-collapse: collapse;
+  background: #161b22;
+}
+th, td {
+  padding: 10px;
+  border-bottom: 1px solid #30363d;
+  text-align: left;
+}
+th { background: #1f6feb; }
+a { color: #58a6ff; text-decoration: none; }
+footer {
+  margin-top: 50px;
+  font-size: 12px;
+  color: #6e7681;
+}
+</style>
 </head>
 
 <body>
-  <h1>Polymarket GPT Bot Scanner</h1>
 
-  <p>Auto-scans Polymarket every minute and researches high-probability markets.</p>
+<h1>Polymarket GPT Bot Scanner</h1>
+<p>Scans once per minute. AI research limited to 1 call every 5 seconds.</p>
 
-  <input type="text" id="apiKeyInput" placeholder="Paste OpenAI API key" size="40" />
+<input
+  type="password"
+  id="apiKey"
+  placeholder="Paste OpenAI API key"
+  style="width: 260px;"
+/>
 
-  <br/>
+<br/><br/>
 
-  <label>
-    Probability Threshold:
-    <select id="thresholdSelect">
-      <option value="0.90">90%+</option>
-      <option value="0.95" selected>95%+</option>
-      <option value="0.98">98%+</option>
-    </select>
-  </label>
+<label>
+  Probability Threshold:
+  <select id="threshold">
+    <option value="0.90">90%+</option>
+    <option value="0.95" selected>95%+</option>
+    <option value="0.98">98%+</option>
+  </select>
+</label>
 
-  <br/>
+<div class="panel filters">
+  <strong>Market Filters:</strong><br/><br/>
+  <label><input type="checkbox" data-cat="politics" checked> Politics</label>
+  <label><input type="checkbox" data-cat="crypto" checked> Crypto / Markets</label>
+  <label><input type="checkbox" data-cat="tech" checked> Tech / AI</label>
+  <label><input type="checkbox" data-cat="culture" checked> Culture / Celebs</label>
+  <label><input type="checkbox" data-cat="geo" checked> Geopolitics / War</label>
+  <label><input type="checkbox" data-cat="sports"> Sports</label>
+  <label><input type="checkbox" data-cat="other" checked> Other</label>
+</div>
 
-  <button id="startBtn">START SCANNER</button>
-  <button id="stopBtn" class="stop" disabled>STOP SCANNER</button>
+<button class="start" id="start">START SCANNER</button>
+<button class="stop" id="stop" disabled>STOP SCANNER</button>
 
-  <div class="status-box">
-    <div><strong>Status:</strong> <span id="runStatus">Stopped</span></div>
-    <div><strong>Last Scan:</strong> <span id="lastScan">—</span></div>
-    <div><strong>Markets Scanned:</strong> <span id="marketsScanned">0</span></div>
-    <div><strong>Markets Matched:</strong> <span id="marketsMatched">0</span></div>
-    <div><strong>AI Calls This Session:</strong> <span id="aiCalls">0</span></div>
-    <div><strong>AI State:</strong> <span id="aiState">Paused</span></div>
-  </div>
+<div class="panel">
+  <div>Status: <span id="status">Stopped</span></div>
+  <div>Last Scan: <span id="lastScan">—</span></div>
+  <div>Markets Scanned: <span id="scanned">0</span></div>
+  <div>Markets Matched: <span id="matched">0</span></div>
+  <div>AI Calls Used: <span id="aiCalls">0</span></div>
+  <div>AI Cooldown: <span id="cooldown">Ready</span></div>
+</div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Market</th>
-        <th>Side</th>
-        <th>Probability</th>
-        <th>AI Verdict</th>
-        <th>Link</th>
-      </tr>
-    </thead>
-    <tbody id="results"></tbody>
-  </table>
+<table>
+<thead>
+<tr>
+<th>Market</th>
+<th>Side</th>
+<th>Prob</th>
+<th>AI Verdict</th>
+<th>Link</th>
+</tr>
+</thead>
+<tbody id="results"></tbody>
+</table>
 
-  <footer>gptbot.html v0002</footer>
+<footer>gptbot.html v0003</footer>
 
 <script>
+const API = "https://gamma-api.polymarket.com/markets?limit=500&active=true&closed=false";
 const PROXY = "https://api.allorigins.win/raw?url=";
-const API_BASE = "https://gamma-api.polymarket.com";
 const SCAN_INTERVAL = 60000;
+const AI_COOLDOWN_MS = 5000;
 
-let scannerInterval = null;
-let seenMarkets = new Set();
-let apiKey = "";
-let aiCallCount = 0;
+let timer = null;
+let aiQueue = [];
+let aiBusy = false;
+let lastAiTime = 0;
+let seen = new Set();
+let aiCount = 0;
+
+function now() { return Date.now(); }
 
 async function fetchJSON(url) {
   try {
-    const res = await fetch(PROXY + encodeURIComponent(url));
-    if (!res.ok) return null;
-    return await res.json();
+    const r = await fetch(PROXY + encodeURIComponent(url));
+    if (!r.ok) return null;
+    return await r.json();
   } catch {
     return null;
   }
 }
 
-async function fetchMarkets() {
-  const url = `${API_BASE}/markets?limit=500&active=true&closed=false`;
-  return await fetchJSON(url) || [];
+function categoryOf(title) {
+  const t = title.toLowerCase();
+  if (t.match(/win|championship|super bowl|match|season/)) return "sports";
+  if (t.match(/bitcoin|eth|gold|stock|market|inflation/)) return "crypto";
+  if (t.match(/ai|openai|google|meta|tech/)) return "tech";
+  if (t.match(/war|nato|china|russia|iran|ukraine/)) return "geo";
+  if (t.match(/divorce|album|movie|celebrity/)) return "culture";
+  if (t.match(/election|president|trump|congress/)) return "politics";
+  return "other";
 }
 
-async function aiResearch(question) {
-  if (!apiKey) return "No API key";
-  aiCallCount++;
-  document.getElementById("aiCalls").textContent = aiCallCount;
-  document.getElementById("aiState").textContent = "Active";
+async function aiWorker() {
+  if (aiBusy || aiQueue.length === 0) return;
+  const wait = Math.max(0, AI_COOLDOWN_MS - (now() - lastAiTime));
+  if (wait > 0) {
+    document.getElementById("cooldown").textContent = `Waiting ${Math.ceil(wait/1000)}s`;
+    setTimeout(aiWorker, wait);
+    return;
+  }
+
+  aiBusy = true;
+  document.getElementById("cooldown").textContent = "Running";
+  const job = aiQueue.shift();
+  lastAiTime = now();
+  aiCount++;
+  document.getElementById("aiCalls").textContent = aiCount;
 
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+        "Authorization": `Bearer ${job.key}`
       },
       body: JSON.stringify({
         model: "gpt-4",
-        messages: [
-          {
-            role: "user",
-            content:
-              `Research the latest news and facts. Is this outcome genuinely near-certain, or is the market likely overconfident? Respond briefly with risk assessment:\n\n"${question}"`
-          }
-        ]
+        messages: [{
+          role: "user",
+          content: `Assess if this outcome is genuinely near-certain. Mention any hidden risks:\n"${job.title}"`
+        }]
       })
     });
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || "AI error";
+    job.cell.textContent =
+      data.choices?.[0]?.message?.content || "No response";
   } catch {
-    return "AI request failed";
+    job.cell.textContent = "AI failed";
   }
-}
 
-function notify(title, body) {
-  if (Notification.permission === "granted") {
-    new Notification(title, { body });
-  }
+  aiBusy = false;
+  document.getElementById("cooldown").textContent = "Ready";
+  setTimeout(aiWorker, 100);
 }
 
 async function scan() {
-  const threshold = parseFloat(document.getElementById("thresholdSelect").value);
   document.getElementById("lastScan").textContent = new Date().toLocaleTimeString();
+  const markets = await fetchJSON(API) || [];
+  document.getElementById("scanned").textContent = markets.length;
 
-  const markets = await fetchMarkets();
-  document.getElementById("marketsScanned").textContent = markets.length;
+  const threshold = parseFloat(document.getElementById("threshold").value);
+  const enabledCats = [...document.querySelectorAll(".filters input:checked")]
+    .map(c => c.dataset.cat);
 
   let matched = 0;
-  const table = document.getElementById("results");
 
   for (const m of markets) {
     let prices = m.outcomePrices;
@@ -197,71 +233,64 @@ async function scan() {
     }
     if (!Array.isArray(prices) || prices.length !== 2) continue;
 
-    const yes = parseFloat(prices[0]);
-    const no = parseFloat(prices[1]);
-
-    let side = null;
-    let prob = 0;
-
+    const yes = prices[0], no = prices[1];
+    let side = null, prob = 0;
     if (yes >= threshold) { side = "YES"; prob = yes; }
     else if (no >= threshold) { side = "NO"; prob = no; }
     else continue;
 
-    matched++;
-    if (seenMarkets.has(m.slug)) continue;
-    seenMarkets.add(m.slug);
+    const cat = categoryOf(m.question || "");
+    if (!enabledCats.includes(cat)) continue;
 
-    const verdict = await aiResearch(m.question || m.title);
+    matched++;
+    if (seen.has(m.slug)) continue;
+    seen.add(m.slug);
 
     const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${m.question || m.title}</td>
-      <td>${side}</td>
-      <td>${(prob * 100).toFixed(1)}%</td>
-      <td>${verdict}</td>
-      <td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>
-    `;
-    table.prepend(row);
+    const verdictCell = document.createElement("td");
+    verdictCell.textContent = "Queued";
 
-    notify(
-      "New High-Probability Polymarket Market",
-      `${side} ${(prob * 100).toFixed(1)}%\n${verdict}`
-    );
+    row.innerHTML = `
+      <td>${m.question}</td>
+      <td>${side}</td>
+      <td>${(prob*100).toFixed(1)}%</td>
+    `;
+    row.appendChild(verdictCell);
+    row.innerHTML += `<td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>`;
+    document.getElementById("results").prepend(row);
+
+    aiQueue.push({
+      title: m.question,
+      cell: verdictCell,
+      key: document.getElementById("apiKey").value.trim()
+    });
   }
 
-  document.getElementById("marketsMatched").textContent = matched;
+  document.getElementById("matched").textContent = matched;
+  aiWorker();
 }
 
-document.getElementById("startBtn").onclick = async () => {
-  apiKey = document.getElementById("apiKeyInput").value.trim();
-  if (!apiKey) {
-    alert("Paste your OpenAI API key first.");
+document.getElementById("start").onclick = () => {
+  if (!document.getElementById("apiKey").value.trim()) {
+    alert("Paste API key first");
     return;
   }
-
-  if (Notification.permission !== "granted") {
-    await Notification.requestPermission();
-  }
-
-  if (scannerInterval) return;
-
+  if (timer) return;
+  document.getElementById("status").textContent = "Running";
   scan();
-  scannerInterval = setInterval(scan, SCAN_INTERVAL);
-
-  document.getElementById("runStatus").textContent = "Running";
-  document.getElementById("aiState").textContent = "Active";
-  document.getElementById("startBtn").disabled = true;
-  document.getElementById("stopBtn").disabled = false;
+  timer = setInterval(scan, SCAN_INTERVAL);
+  document.getElementById("start").disabled = true;
+  document.getElementById("stop").disabled = false;
 };
 
-document.getElementById("stopBtn").onclick = () => {
-  clearInterval(scannerInterval);
-  scannerInterval = null;
-  apiKey = "";
-  document.getElementById("runStatus").textContent = "Stopped";
-  document.getElementById("aiState").textContent = "Paused";
-  document.getElementById("startBtn").disabled = false;
-  document.getElementById("stopBtn").disabled = true;
+document.getElementById("stop").onclick = () => {
+  clearInterval(timer);
+  timer = null;
+  aiQueue = [];
+  aiBusy = false;
+  document.getElementById("status").textContent = "Stopped";
+  document.getElementById("start").disabled = false;
+  document.getElementById("stop").disabled = true;
 };
 </script>
 
