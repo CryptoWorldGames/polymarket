@@ -7,8 +7,12 @@
 
   <!--
     File: gptbot.html
-    Version: v0001
-    Purpose: Auto-scanning Polymarket 95%+ markets with AI research + desktop alerts
+    Version: v0002
+    Changes:
+    - Added threshold selector (90 / 95 / 98)
+    - Added live scan + AI status indicators
+    - Added AI call counter
+    - Improved logging so you KNOW it’s working
   -->
 
   <style>
@@ -20,7 +24,7 @@
       text-align: center;
     }
     h1 { color: #58a6ff; }
-    input, button {
+    input, select, button {
       padding: 12px;
       font-size: 16px;
       border-radius: 8px;
@@ -36,6 +40,15 @@
     }
     button.stop {
       background: #da3633;
+    }
+    .status-box {
+      margin: 20px auto;
+      max-width: 800px;
+      background: #161b22;
+      padding: 16px;
+      border-radius: 12px;
+      text-align: left;
+      font-size: 14px;
     }
     table {
       width: 95%;
@@ -61,16 +74,34 @@
 <body>
   <h1>Polymarket GPT Bot Scanner</h1>
 
-  <p>Scans every 60 seconds for 95%+ markets and performs AI research.</p>
+  <p>Auto-scans Polymarket every minute and researches high-probability markets.</p>
 
   <input type="text" id="apiKeyInput" placeholder="Paste OpenAI API key" size="40" />
+
+  <br/>
+
+  <label>
+    Probability Threshold:
+    <select id="thresholdSelect">
+      <option value="0.90">90%+</option>
+      <option value="0.95" selected>95%+</option>
+      <option value="0.98">98%+</option>
+    </select>
+  </label>
 
   <br/>
 
   <button id="startBtn">START SCANNER</button>
   <button id="stopBtn" class="stop" disabled>STOP SCANNER</button>
 
-  <p id="status">Scanner stopped.</p>
+  <div class="status-box">
+    <div><strong>Status:</strong> <span id="runStatus">Stopped</span></div>
+    <div><strong>Last Scan:</strong> <span id="lastScan">—</span></div>
+    <div><strong>Markets Scanned:</strong> <span id="marketsScanned">0</span></div>
+    <div><strong>Markets Matched:</strong> <span id="marketsMatched">0</span></div>
+    <div><strong>AI Calls This Session:</strong> <span id="aiCalls">0</span></div>
+    <div><strong>AI State:</strong> <span id="aiState">Paused</span></div>
+  </div>
 
   <table>
     <thead>
@@ -85,7 +116,7 @@
     <tbody id="results"></tbody>
   </table>
 
-  <footer>gptbot.html v0001</footer>
+  <footer>gptbot.html v0002</footer>
 
 <script>
 const PROXY = "https://api.allorigins.win/raw?url=";
@@ -95,6 +126,7 @@ const SCAN_INTERVAL = 60000;
 let scannerInterval = null;
 let seenMarkets = new Set();
 let apiKey = "";
+let aiCallCount = 0;
 
 async function fetchJSON(url) {
   try {
@@ -113,6 +145,10 @@ async function fetchMarkets() {
 
 async function aiResearch(question) {
   if (!apiKey) return "No API key";
+  aiCallCount++;
+  document.getElementById("aiCalls").textContent = aiCallCount;
+  document.getElementById("aiState").textContent = "Active";
+
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -126,7 +162,7 @@ async function aiResearch(question) {
           {
             role: "user",
             content:
-              `Research latest news and facts. Is this outcome almost certain? Answer briefly with risk assessment:\n\n"${question}"`
+              `Research the latest news and facts. Is this outcome genuinely near-certain, or is the market likely overconfident? Respond briefly with risk assessment:\n\n"${question}"`
           }
         ]
       })
@@ -145,10 +181,13 @@ function notify(title, body) {
 }
 
 async function scan() {
-  document.getElementById("status").textContent =
-    "Scanning... " + new Date().toLocaleTimeString();
+  const threshold = parseFloat(document.getElementById("thresholdSelect").value);
+  document.getElementById("lastScan").textContent = new Date().toLocaleTimeString();
 
   const markets = await fetchMarkets();
+  document.getElementById("marketsScanned").textContent = markets.length;
+
+  let matched = 0;
   const table = document.getElementById("results");
 
   for (const m of markets) {
@@ -164,10 +203,11 @@ async function scan() {
     let side = null;
     let prob = 0;
 
-    if (yes >= 0.95) { side = "YES"; prob = yes; }
-    else if (no >= 0.95) { side = "NO"; prob = no; }
+    if (yes >= threshold) { side = "YES"; prob = yes; }
+    else if (no >= threshold) { side = "NO"; prob = no; }
     else continue;
 
+    matched++;
     if (seenMarkets.has(m.slug)) continue;
     seenMarkets.add(m.slug);
 
@@ -184,10 +224,12 @@ async function scan() {
     table.prepend(row);
 
     notify(
-      "New 95%+ Polymarket Market",
+      "New High-Probability Polymarket Market",
       `${side} ${(prob * 100).toFixed(1)}%\n${verdict}`
     );
   }
+
+  document.getElementById("marketsMatched").textContent = matched;
 }
 
 document.getElementById("startBtn").onclick = async () => {
@@ -206,7 +248,8 @@ document.getElementById("startBtn").onclick = async () => {
   scan();
   scannerInterval = setInterval(scan, SCAN_INTERVAL);
 
-  document.getElementById("status").textContent = "Scanner running...";
+  document.getElementById("runStatus").textContent = "Running";
+  document.getElementById("aiState").textContent = "Active";
   document.getElementById("startBtn").disabled = true;
   document.getElementById("stopBtn").disabled = false;
 };
@@ -214,7 +257,9 @@ document.getElementById("startBtn").onclick = async () => {
 document.getElementById("stopBtn").onclick = () => {
   clearInterval(scannerInterval);
   scannerInterval = null;
-  document.getElementById("status").textContent = "Scanner stopped.";
+  apiKey = "";
+  document.getElementById("runStatus").textContent = "Stopped";
+  document.getElementById("aiState").textContent = "Paused";
   document.getElementById("startBtn").disabled = false;
   document.getElementById("stopBtn").disabled = true;
 };
