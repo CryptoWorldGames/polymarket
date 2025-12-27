@@ -2,13 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-
-<!-- CACHE BUSTING -->
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-
 <title>Polymarket GPT Bot Scanner v9</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Polymarket GPT Bot Scanner v9 build 9.3">
+<meta name="theme-color" content="#0b0f14">
 
 <style>
 body {
@@ -20,8 +18,8 @@ body {
 
 .version {
   position: fixed;
-  top: 6px;
-  left: 12px;
+  top: 8px;
+  left: 20px;
   font-size: 12px;
   opacity: 0.6;
 }
@@ -44,11 +42,11 @@ h1 {
 
 input[type=password] {
   padding: 6px;
-  width: 280px;
+  width: 300px;
 }
 
 button {
-  padding: 8px 16px;
+  padding: 10px 18px;
   font-weight: bold;
   border: none;
   cursor: pointer;
@@ -57,9 +55,18 @@ button {
 .start { background: #16a34a; color: #fff; }
 .stop  { background: #dc2626; color: #fff; }
 
-.filters { margin-top: 10px; }
+.filters {
+  margin-top: 10px;
+}
 
-.status { margin-top: 8px; font-size: 14px; }
+.filters label {
+  margin-right: 12px;
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 14px;
+}
 
 table {
   width: 100%;
@@ -69,24 +76,31 @@ table {
 th, td {
   padding: 8px;
   border-bottom: 1px solid #1f2933;
+  text-align: left;
 }
 
-th { color: #93c5fd; }
+th {
+  color: #93c5fd;
+}
 
 a.market {
   color: #2dd4bf;
-  text-decoration: underline;
 }
 
 .risk-safe { color: #22c55e; }
 .risk-mid  { color: #eab308; }
 .risk-high { color: #ef4444; }
+
+.ai-note {
+  opacity: 0.8;
+  font-size: 13px;
+}
 </style>
 </head>
 
 <body>
 
-<div class="version">v9 · build 9.2</div>
+<div class="version">v9 · build 9.3</div>
 
 <header>
   <h1>Polymarket GPT Bot Scanner v9</h1>
@@ -100,13 +114,20 @@ a.market {
 
   <div class="filters">
     <strong>Categories:</strong>
-    Crypto · Politics · Sports · Tech · Culture · Business · World · Other
+    <label><input type="checkbox" checked> Crypto</label>
+    <label><input type="checkbox" checked> Politics</label>
+    <label><input type="checkbox" checked> Sports</label>
+    <label><input type="checkbox" checked> Tech</label>
+    <label><input type="checkbox" checked> Culture</label>
+    <label><input type="checkbox" checked> Business</label>
+    <label><input type="checkbox" checked> World</label>
+    <label><input type="checkbox" checked> Other</label>
   </div>
 
   <div class="filters">
     <strong>Probability Filter:</strong>
     <select id="probFilter">
-      <option value="50">50%+</option>
+      <option value="50" selected>50%+</option>
       <option value="60">60%+</option>
       <option value="70">70%+</option>
       <option value="80">80%+</option>
@@ -120,12 +141,13 @@ a.market {
 <table>
 <thead>
 <tr>
+  <th>Select</th>
   <th>Market</th>
   <th>Side</th>
   <th>Prob</th>
   <th>Risk</th>
   <th>Time Left</th>
-  <th>Status</th>
+  <th>AI Comment</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
@@ -171,12 +193,12 @@ async function startScan() {
     if (!m.active || m.closed || !m.endDate) continue;
 
     const remaining = new Date(m.endDate) - new Date();
-    if (remaining > 14 * 24 * 60 * 60 * 1000) continue;
+    if (remaining > 14 * 86400000) continue;
 
-    const yesPrice = m.outcomePrices?.[0];
-    if (typeof yesPrice !== "number") continue;
+    const priceYes = m.outcomePrices?.[0];
+    if (typeof priceYes !== "number") continue;
 
-    const prob = Math.round((1 - yesPrice) * 100);
+    const prob = Math.round((1 - priceYes) * 100);
     if (prob < minProb) continue;
 
     const risk =
@@ -185,28 +207,28 @@ async function startScan() {
 
     const riskClass =
       risk === "SAFE" ? "risk-safe" :
-      risk === "MID"  ? "risk-mid"  : "risk-high";
+      risk === "MID" ? "risk-mid" : "risk-high";
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>
-        <a class="market" target="_blank"
+      <td><input type="checkbox"></td>
+      <td><a class="market" target="_blank"
         href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">
-        ${m.question}</a>
-      </td>
+        ${m.question}</a></td>
       <td>YES</td>
       <td>${prob}%</td>
       <td class="${riskClass}">${risk}</td>
       <td>${timeLeft(m.endDate)}</td>
-      <td>READY</td>
+      <td class="ai-note">AI review pending</td>
     `;
     document.getElementById("rows").appendChild(tr);
     shown++;
+    document.getElementById("status").textContent =
+      `Status: scanning… ${shown} found`;
   }
 
   document.getElementById("status").textContent =
     `Status: loaded ${shown} active markets`;
-  stopScan();
 }
 </script>
 
