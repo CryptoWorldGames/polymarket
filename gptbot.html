@@ -1,267 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <title>Polymarket GPT Bot Scanner</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<!--
-File: gptbot.html
-Version: v0007
-
-Short commit:
-v0007 live scanner with risk & ladder logic
-
-Long commit:
-Rebuilds Polymarket scanner to use only live market data with
-AI-based risk classification, ladder awareness, profit previews,
-and queue-based analysis. Adds visual risk bars, removes mock data,
-fixes broken event links by using search URLs, and preserves
-research-first SAFE/RISK labeling without listing 100% markets.
--->
-
 <style>
-body {
-  background:#0d1117;
-  color:#e6edf3;
-  font-family:Arial,sans-serif;
-  margin:20px;
-}
-h1 { color:#58a6ff; text-align:center; }
-.panel {
-  background:#161b22;
-  border-radius:12px;
-  padding:15px;
-  margin:15px auto;
-  max-width:1200px;
-}
-button {
-  padding:10px 20px;
-  border:none;
-  border-radius:10px;
-  font-weight:bold;
-  cursor:pointer;
-}
-.start { background:#238636; color:white; }
-.stop { background:#da3633; color:white; }
-
-table {
-  width:100%;
-  border-collapse:collapse;
-  margin-top:20px;
-}
-th {
-  background:#1f6feb;
-  padding:10px;
-  text-align:left;
-}
-td {
-  padding:10px;
-  border-bottom:1px solid #30363d;
-  vertical-align:top;
-}
-
-.market-title {
-  color:#2dd4bf;
-  text-decoration:underline;
-  cursor:pointer;
-}
-
-.risk-bars span {
-  display:inline-block;
-  width:6px;
-  height:12px;
-  margin-right:2px;
-  background:#30363d;
-}
-.risk-bars .on { background:#3fb950; }
-
-.status-safe { color:#3fb950; font-weight:bold; }
-.status-risk { color:#f85149; font-weight:bold; }
-.status-queued { color:#d29922; font-weight:bold; }
-
-footer {
-  text-align:center;
-  color:#6e7681;
-  margin-top:30px;
-  font-size:12px;
-}
+body { background:#0b0f16;color:#fff;font-family:Arial }
+h1 { color:#4da3ff }
+button { padding:8px 14px;margin:5px }
+table { width:100%; border-collapse:collapse;margin-top:10px }
+th,td { border-bottom:1px solid #222;padding:6px;font-size:14px }
+.safe { color:#00ff7f }
+.risk { color:#ff4d4d }
 </style>
 </head>
 
 <body>
 
-<h1>Polymarket GPT Bot Scanner</h1>
-<p style="text-align:center">Research-first scanner. AI must justify safety.</p>
+<h1>Polymarket GPT Bot Scanner <span style="font-size:14px;">v8</span></h1>
+<p>Research-first scanner. AI must justify safety.</p>
 
-<div class="panel">
-  <input id="apiKey" type="password" placeholder="Paste OpenAI API key" style="width:260px">
-  <button id="toggleBtn" class="start">START SCANNER</button>
-</div>
+<button onclick="startScan()">START SCANNER</button>
 
-<div class="panel">
-  <div>Status: <span id="status">Stopped</span></div>
-  <div>AI Calls Used: <span id="calls">0</span></div>
-  <div>AI Queue Length: <span id="queue">0</span></div>
-</div>
+<div id="status">Status: Idle</div>
 
 <table>
 <thead>
 <tr>
   <th>Market</th>
-  <th>Side</th>
   <th>Prob</th>
-  <th>Risk</th>
   <th>Status</th>
-  <th>Why (AI)</th>
-  <th>Profit (If Win)</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
 </table>
 
-<footer>gptbot.html v0007</footer>
+<p style="opacity:.5">v8</p>
 
 <script>
-const API = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200";
-const PROXY = "https://api.allorigins.win/raw?url=";
+const WORKER =
+  "https://solitary-paper-639a.cryptoworldgames.workers.dev/?url=";
 
-let running=false;
-let aiCalls=0;
-let queue=[];
-let processing=false;
-
-function riskBars(level){
-  let html='<div class="risk-bars">';
-  for(let i=0;i<6;i++){
-    html+=`<span class="${i<level?'on':''}"></span>`;
-  }
-  html+='</div>';
-  return html;
+async function startScan() {
+  document.getElementById("status").innerText = "Status: Scanning...";
+  const res = await fetch(
+    WORKER + encodeURIComponent("https://gamma-api.polymarket.com/markets")
+  );
+  const data = await res.json();
+  render(data.slice(0, 40));
 }
 
-function profitPreview(p){
-  const inv=[1,10,25];
-  return inv.map(v=>{
-    const win=(v/p).toFixed(2);
-    return `$${v}→$${win}`;
-  }).join("<br>");
-}
+function render(markets) {
+  const rows = document.getElementById("rows");
+  rows.innerHTML = "";
 
-async function fetchMarkets(){
-  const r=await fetch(PROXY+encodeURIComponent(API));
-  return await r.json();
-}
+  markets.forEach(m => {
+    const yes = parseFloat(m.outcomePrices?.[0] || 0);
+    const prob = Math.round(yes * 1000) / 10;
+    const safe = prob >= 95;
 
-async function aiAnalyze(m,row){
-  queue.push({m,row});
-  document.getElementById("queue").textContent=queue.length;
-  if(processing) return;
-  processing=true;
-
-  while(queue.length){
-    const item=queue.shift();
-    document.getElementById("queue").textContent=queue.length;
-    aiCalls++;
-    document.getElementById("calls").textContent=aiCalls;
-
-    try{
-      const res=await fetch("https://api.openai.com/v1/chat/completions",{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          "Authorization":"Bearer "+document.getElementById("apiKey").value
-        },
-        body:JSON.stringify({
-          model:"gpt-4o-mini",
-          messages:[{
-            role:"user",
-            content:`Assess if this market is SAFE or RISK before settlement.
-Explain briefly in one paragraph.\n"${item.m.question}"`
-          }]
-        })
-      });
-      const data=await res.json();
-      const text=data.choices?.[0]?.message?.content||"RISK";
-
-      if(text.toUpperCase().startsWith("SAFE")){
-        item.row.querySelector(".status").innerHTML='<span class="status-safe">SAFE</span>';
-      }else{
-        item.row.querySelector(".status").innerHTML='<span class="status-risk">RISK</span>';
-      }
-      item.row.querySelector(".why").textContent=text;
-
-    }catch{
-      item.row.querySelector(".status").innerHTML='<span class="status-risk">ERROR</span>';
-    }
-
-    await new Promise(r=>setTimeout(r,5000));
-  }
-
-  processing=false;
-}
-
-async function start(){
-  running=true;
-  document.getElementById("status").textContent="Running";
-  document.getElementById("toggleBtn").textContent="STOP SCANNER";
-  document.getElementById("toggleBtn").className="stop";
-
-  const data=await fetchMarkets();
-  const body=document.getElementById("rows");
-  body.innerHTML="";
-
-  for(const m of data){
-    let prices=m.outcomePrices;
-    if(typeof prices==="string"){
-      try{ prices=JSON.parse(prices); }catch{ continue; }
-    }
-    if(!Array.isArray(prices)||prices.length!==2) continue;
-
-    const yes=prices[0], no=prices[1];
-    if(yes>=1 || no>=1) continue;
-
-    let side=null,prob=0;
-    if(yes>=0.9){ side="YES"; prob=yes; }
-    else if(no>=0.9){ side="NO"; prob=no; }
-    else continue;
-
-    const tr=document.createElement("tr");
-    tr.innerHTML=`
-      <td>
-        <span class="market-title"
-          onclick="window.open('https://polymarket.com/search?_q=${encodeURIComponent(m.question)}','_blank')">
-          ${m.question}
-        </span>
-      </td>
-      <td>${side}</td>
-      <td>${(prob*100).toFixed(1)}%</td>
-      <td>${riskBars(Math.round(prob*6))}</td>
-      <td class="status status-queued">QUEUED</td>
-      <td class="why"></td>
-      <td>${profitPreview(prob)}</td>
+    rows.innerHTML += `
+      <tr>
+        <td>
+          <a href="https://polymarket.com/search?_q=${encodeURIComponent(m.slug)}"
+             target="_blank" style="color:#2dd4bf">
+            ${m.question}
+          </a>
+        </td>
+        <td>${prob}%</td>
+        <td class="${safe ? "safe" : "risk"}">
+          ${safe ? "SAFE" : "RISK"}
+        </td>
+      </tr>
     `;
-    body.appendChild(tr);
-    aiAnalyze(m,tr);
-  }
-}
+  });
 
-function stop(){
-  running=false;
-  document.getElementById("status").textContent="Stopped";
-  document.getElementById("toggleBtn").textContent="START SCANNER";
-  document.getElementById("toggleBtn").className="start";
+  document.getElementById("status").innerText =
+    "Status: Loaded " + markets.length + " markets";
 }
-
-document.getElementById("toggleBtn").onclick=()=>{
-  if(!running){
-    if(!document.getElementById("apiKey").value.trim()){
-      alert("Paste API key first");
-      return;
-    }
-    start();
-  }else stop();
-};
 </script>
 
 </body>
