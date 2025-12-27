@@ -6,124 +6,169 @@
 <style>
 body {
   background:#0b0f14;
-  color:#e6edf3;
+  color:#e5e7eb;
   font-family:Arial, sans-serif;
 }
-h1 { color:#4ea1ff; }
+h1 { color:#4da3ff; }
+.controls { margin:10px 0; }
+button {
+  padding:10px 18px;
+  font-size:16px;
+  border-radius:6px;
+  border:none;
+  cursor:pointer;
+}
+#startBtn { background:#16a34a; color:white; }
+#stopBtn { background:#dc2626; color:white; display:none; }
 table {
   width:100%;
   border-collapse:collapse;
+  margin-top:12px;
 }
 th, td {
   padding:8px;
   border-bottom:1px solid #1f2937;
 }
-th { color:#9ecbff; }
 a { color:#2dd4bf; text-decoration:none; }
-.badge-risk { color:#ff4d4d; }
-.badge-safe { color:#22c55e; }
-.controls { margin:10px 0; }
-.small { font-size:12px; color:#9ca3af; }
+.riskbar span {
+  display:inline-block;
+  width:6px;
+  height:12px;
+  margin-right:2px;
+  background:#1f2937;
+}
+.green { background:#22c55e !important; }
+.red { background:#ef4444 !important; }
+.version {
+  position:fixed;
+  bottom:6px;
+  left:6px;
+  font-size:12px;
+  opacity:0.6;
+}
+.topver {
+  position:absolute;
+  top:6px;
+  left:6px;
+  font-size:12px;
+  opacity:0.7;
+}
 </style>
 </head>
 
 <body>
-
+<div class="topver">v9</div>
 <h1>Polymarket GPT Bot Scanner v9</h1>
-<div class="small">Research-first scanner. AI must justify safety.</div>
+<div>Research-first scanner. AI must justify safety.</div>
 
 <div class="controls">
-  <input id="apiKey" type="password" placeholder="Paste ChatGPT API Key" size="40">
-  <button onclick="startScan()">START SCANNER</button>
+<input id="apiKey" placeholder="Paste OpenAI API key (optional)" size="40">
+<button id="startBtn">START SCANNER</button>
+<button id="stopBtn">STOP SCANNER</button>
 </div>
 
 <div class="controls">
-  <strong>Categories:</strong>
-  <label><input type="checkbox" checked> Crypto</label>
-  <label><input type="checkbox" checked> Politics</label>
-  <label><input type="checkbox" checked> Sports</label>
-  <label><input type="checkbox" checked> Tech</label>
-  <label><input type="checkbox" checked> Other</label>
+Categories:
+<label><input type="checkbox" checked data-cat="crypto"> Crypto</label>
+<label><input type="checkbox" checked data-cat="politics"> Politics</label>
+<label><input type="checkbox" checked data-cat="sports"> Sports</label>
+<label><input type="checkbox" checked data-cat="tech"> Tech</label>
+<label><input type="checkbox" checked data-cat="culture"> Culture</label>
+<label><input type="checkbox" checked data-cat="other"> Other</label>
 </div>
 
 <div class="controls">
-  <strong>Probability Filter:</strong>
-  <select id="probFilter">
-    <option value="50">50%+</option>
-    <option value="60">60%+</option>
-    <option value="70">70%+</option>
-    <option value="75">75%+</option>
-    <option value="80">80%+</option>
-    <option value="85">85%+</option>
-    <option value="90">90–99.9%</option>
-  </select>
+Probability Filter:
+<select id="probFilter">
+<option value="50">50%+</option>
+<option value="60">60%+</option>
+<option value="70">70%+</option>
+<option value="75">75%+</option>
+<option value="80">80%+</option>
+<option value="85">85%+</option>
+<option value="90">90–99.9%</option>
+</select>
 </div>
 
-<div id="status" class="small">Status: idle</div>
+<div id="status">Status: Idle</div>
 
 <table>
 <thead>
 <tr>
-  <th>Select</th>
-  <th>Market</th>
-  <th>Side</th>
-  <th>Prob</th>
-  <th>Risk</th>
-  <th>Status</th>
-  <th>Profit (If Win)</th>
+<th>Select</th>
+<th>Market</th>
+<th>Side</th>
+<th>Prob</th>
+<th>Risk</th>
+<th>Status</th>
+<th>Profit (If Win)</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
 </table>
 
-<div class="small" style="margin-top:20px;">v9</div>
+<div class="version">gptbot.html v9</div>
 
 <script>
-const PROXY = "https://solitary-paper-639a.cryptoworldgames.workers.dev/?url=";
+let timer = null;
 
-async function startScan() {
-  document.getElementById("status").innerText = "Status: loading active markets...";
-  const res = await fetch(PROXY + encodeURIComponent("https://gamma-api.polymarket.com/markets"));
+const WORKER = "https://solitary-paper-639a.cryptoworldgames.workers.dev";
+
+document.getElementById("startBtn").onclick = () => {
+  document.getElementById("startBtn").style.display="none";
+  document.getElementById("stopBtn").style.display="inline-block";
+  scan();
+  timer = setInterval(scan, 60000);
+};
+
+document.getElementById("stopBtn").onclick = () => {
+  clearInterval(timer);
+  document.getElementById("stopBtn").style.display="none";
+  document.getElementById("startBtn").style.display="inline-block";
+  document.getElementById("status").innerText="Status: Stopped";
+};
+
+async function scan(){
+  document.getElementById("status").innerText="Status: Scanning...";
+  const res = await fetch(`${WORKER}/?url=https://gamma-api.polymarket.com/markets`);
   const data = await res.json();
 
-  const now = Date.now();
-  const active = data.filter(m =>
-    m.active === true &&
-    m.closed === false &&
-    new Date(m.endDate).getTime() > now
-  );
-
-  document.getElementById("status").innerText =
-    `Status: Loaded ${active.length} active markets`;
-
-  render(active.slice(0, 50));
-}
-
-function render(markets) {
   const tbody = document.getElementById("rows");
   tbody.innerHTML = "";
 
-  markets.forEach(m => {
-    const prob = m.outcomePrices && m.outcomePrices[0]
-      ? Math.round(parseFloat(m.outcomePrices[0]) * 100)
-      : null;
+  const minProb = parseInt(document.getElementById("probFilter").value);
 
-    const risk = prob && prob >= 80 ? "SAFE" : "RISK";
+  data.filter(m => m.active).forEach(m => {
+    if(!m.outcomePrices || !m.outcomePrices[0]) return;
+
+    const prob = Math.round(parseFloat(m.outcomePrices[0]) * 100);
+    if(prob < minProb) return;
 
     const tr = document.createElement("tr");
+
     tr.innerHTML = `
       <td><input type="checkbox"></td>
-      <td><a href="https://polymarket.com/search?_q=${encodeURIComponent(m.slug)}" target="_blank">${m.question}</a></td>
+      <td><a target="_blank" href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">${m.question}</a></td>
       <td>YES</td>
-      <td>${prob ? prob + "%" : "—"}</td>
-      <td class="${risk === "SAFE" ? "badge-safe" : "badge-risk"}">${risk}</td>
-      <td>PENDING</td>
-      <td>$1 → $${prob ? (100 / prob).toFixed(2) : "—"}</td>
+      <td>${prob}%</td>
+      <td>${riskBars(prob)}</td>
+      <td>${prob >= 90 ? "SAFE" : "RISK"}</td>
+      <td>$1 → $${(1 / (m.outcomePrices[0])).toFixed(2)}</td>
     `;
     tbody.appendChild(tr);
   });
+
+  document.getElementById("status").innerText="Status: Scan complete";
+}
+
+function riskBars(prob){
+  let bars = Math.round(prob / 20);
+  let html = '<div class="riskbar">';
+  for(let i=0;i<6;i++){
+    html += `<span class="${i<bars ? 'green':'red'}"></span>`;
+  }
+  return html + "</div>";
 }
 </script>
-
 </body>
 </html>
