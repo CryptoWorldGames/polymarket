@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Polymarket GPT Bot Scanner v9</title>
+<meta charset="UTF-8">
+<title>Polymarket GPT Bot Scanner v9.5</title>
 
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Crypto YES/NO market scanner for Polymarket">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Live Polymarket crypto market scanner">
 
 <style>
 body {
@@ -41,7 +41,7 @@ h1 {
 
 input[type=password] {
   padding: 6px;
-  width: 300px;
+  width: 280px;
 }
 
 button {
@@ -69,7 +69,9 @@ th, td {
   border-bottom: 1px solid #1f2933;
 }
 
-th { color: #93c5fd; }
+th {
+  color: #93c5fd;
+}
 
 a.market {
   color: #2dd4bf;
@@ -84,17 +86,16 @@ a.market {
 
 <body>
 
-<div class="version">v9 · build 9.4</div>
+<div class="version">v9 · build 9.5</div>
 
 <header>
   <h1>Polymarket GPT Bot Scanner v9</h1>
-  <div>Research-first scanner. AI must justify safety.</div>
+  <div>Research-first scanner. AI added later.</div>
 </header>
 
 <div class="controls">
   <input id="apiKey" type="password"
-    placeholder="Paste OpenAI API key (hidden)" />
-
+    placeholder="OpenAI API key (unused for now)" />
   <button id="startBtn" class="start">START SCANNER</button>
   <button id="stopBtn" class="stop" style="display:none;">STOP SCANNER</button>
 
@@ -126,20 +127,21 @@ document.getElementById("stopBtn").onclick = stopScan;
 
 function stopScan() {
   running = false;
-  document.getElementById("status").textContent = "Status: stopped";
   document.getElementById("startBtn").style.display = "inline-block";
   document.getElementById("stopBtn").style.display = "none";
+  document.getElementById("status").textContent = "Status: stopped";
 }
 
 function timeLeft(end) {
-  if (!end) return "unknown";
+  if (!end) return "rolling";
   const ms = new Date(end) - new Date();
   if (ms <= 0) return "ended";
-  const m = Math.floor(ms / 60000);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d`;
 }
 
 async function startScan() {
@@ -149,15 +151,15 @@ async function startScan() {
   document.getElementById("startBtn").style.display = "none";
   document.getElementById("stopBtn").style.display = "inline-block";
 
-  let markets;
+  let markets = [];
   try {
     const res = await fetch(
       `${WORKER}/?url=https://gamma-api.polymarket.com/markets`
     );
     markets = await res.json();
-  } catch {
+  } catch (e) {
     document.getElementById("status").textContent =
-      "Status: failed to fetch markets";
+      "Status: failed to load markets";
     stopScan();
     return;
   }
@@ -167,42 +169,42 @@ async function startScan() {
   for (const m of markets) {
     if (!running || shown >= 50) break;
     if (!m.active || m.closed) continue;
+    if (!m.question) continue;
 
-    // crypto only
-    if (!m.category || !m.category.toLowerCase().includes("crypto")) continue;
+    // Crypto-only filter (simple + reliable)
+    const q = m.question.toLowerCase();
+    if (
+      !q.includes("btc") &&
+      !q.includes("bitcoin") &&
+      !q.includes("eth") &&
+      !q.includes("ethereum") &&
+      !q.includes("sol") &&
+      !q.includes("xrp")
+    ) continue;
 
-    // YES / NO only
-    if (!Array.isArray(m.outcomes) || m.outcomes.length !== 2) continue;
+    let probText = "—";
+    let risk = "UNKNOWN";
+    let riskClass = "risk-mid";
 
-    // try to infer YES probability safely
-    let priceYes =
-      m.outcomePrices?.[0] ??
-      m.outcomes?.[0]?.price ??
-      m.outcomes?.[0]?.probability;
-
-    if (typeof priceYes !== "number") continue;
-
-    const prob = Math.round((1 - priceYes) * 100);
-    if (prob <= 0 || prob >= 100) continue;
-
-    const risk =
-      prob >= 85 ? "SAFE" :
-      prob >= 65 ? "MID" : "RISK";
-
-    const riskClass =
-      risk === "SAFE" ? "risk-safe" :
-      risk === "MID"  ? "risk-mid"  : "risk-high";
+    if (Array.isArray(m.outcomePrices) &&
+        typeof m.outcomePrices[0] === "number") {
+      const p = Math.round((1 - m.outcomePrices[0]) * 100);
+      probText = `${p}%`;
+      if (p >= 80) { risk = "SAFE"; riskClass = "risk-safe"; }
+      else if (p >= 60) { risk = "MID"; riskClass = "risk-mid"; }
+      else { risk = "RISK"; riskClass = "risk-high"; }
+    }
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>
         <a class="market" target="_blank"
-        href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">
-        ${m.question}
+          href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">
+          ${m.question}
         </a>
       </td>
       <td>YES</td>
-      <td>${prob}%</td>
+      <td>${probText}</td>
       <td class="${riskClass}">${risk}</td>
       <td>${timeLeft(m.endDate)}</td>
       <td>LIVE</td>
@@ -214,8 +216,6 @@ async function startScan() {
 
   document.getElementById("status").textContent =
     `Status: loaded ${shown} crypto markets`;
-
-  stopScan();
 }
 </script>
 
