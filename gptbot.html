@@ -3,172 +3,235 @@
 <head>
 <meta charset="UTF-8" />
 <title>Polymarket GPT Bot Scanner v9</title>
+
 <style>
 body {
-  background:#0b0f14;
-  color:#e5e7eb;
-  font-family:Arial, sans-serif;
+  margin: 0;
+  background: #0b0f14;
+  color: #e6edf3;
+  font-family: Arial, sans-serif;
 }
-h1 { color:#4da3ff; }
-.controls { margin:10px 0; }
-button {
-  padding:10px 18px;
-  font-size:16px;
-  border-radius:6px;
-  border:none;
-  cursor:pointer;
-}
-#startBtn { background:#16a34a; color:white; }
-#stopBtn { background:#dc2626; color:white; display:none; }
-table {
-  width:100%;
-  border-collapse:collapse;
-  margin-top:12px;
-}
-th, td {
-  padding:8px;
-  border-bottom:1px solid #1f2937;
-}
-a { color:#2dd4bf; text-decoration:none; }
-.riskbar span {
-  display:inline-block;
-  width:6px;
-  height:12px;
-  margin-right:2px;
-  background:#1f2937;
-}
-.green { background:#22c55e !important; }
-.red { background:#ef4444 !important; }
+
 .version {
-  position:fixed;
-  bottom:6px;
-  left:6px;
-  font-size:12px;
-  opacity:0.6;
+  position: fixed;
+  top: 6px;
+  left: 16px;
+  font-size: 12px;
+  opacity: 0.65;
 }
-.topver {
-  position:absolute;
-  top:6px;
-  left:6px;
-  font-size:12px;
-  opacity:0.7;
+
+header {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1f2933;
 }
+
+h1 {
+  margin: 0 0 6px 0;
+  color: #4da3ff;
+}
+
+.controls {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1f2933;
+}
+
+input[type=text] {
+  padding: 6px;
+  width: 280px;
+}
+
+button {
+  padding: 10px 18px;
+  font-weight: bold;
+  cursor: pointer;
+  border: none;
+  margin-left: 6px;
+}
+
+.start { background: #16a34a; color: #fff; }
+.stop  { background: #dc2626; color: #fff; }
+
+.filters {
+  margin-top: 10px;
+}
+
+.filters label {
+  margin-right: 10px;
+}
+
+select {
+  padding: 5px;
+}
+
+.status {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 8px;
+  border-bottom: 1px solid #1f2933;
+}
+
+th {
+  color: #93c5fd;
+  text-align: left;
+}
+
+tr.selected {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+a.market {
+  color: #2dd4bf;
+  text-decoration: underline;
+}
+
+.risk-safe { color: #22c55e; }
+.risk-mid  { color: #eab308; }
+.risk-high { color: #ef4444; }
 </style>
 </head>
 
 <body>
-<div class="topver">v9</div>
-<h1>Polymarket GPT Bot Scanner v9</h1>
-<div>Research-first scanner. AI must justify safety.</div>
+
+<div class="version">v9 · build 9.1</div>
+
+<header>
+  <h1>Polymarket GPT Bot Scanner v9</h1>
+  <div>Research-first scanner. AI must justify safety.</div>
+</header>
 
 <div class="controls">
-<input id="apiKey" placeholder="Paste OpenAI API key (optional)" size="40">
-<button id="startBtn">START SCANNER</button>
-<button id="stopBtn">STOP SCANNER</button>
-</div>
+  <input id="apiKey" type="text" placeholder="Paste OpenAI API key (optional)" />
+  <button id="startBtn" class="start">START SCANNER</button>
+  <button id="stopBtn" class="stop" style="display:none;">STOP SCANNER</button>
 
-<div class="controls">
-Categories:
-<label><input type="checkbox" checked data-cat="crypto"> Crypto</label>
-<label><input type="checkbox" checked data-cat="politics"> Politics</label>
-<label><input type="checkbox" checked data-cat="sports"> Sports</label>
-<label><input type="checkbox" checked data-cat="tech"> Tech</label>
-<label><input type="checkbox" checked data-cat="culture"> Culture</label>
-<label><input type="checkbox" checked data-cat="other"> Other</label>
-</div>
+  <div class="filters">
+    <strong>Categories:</strong>
+    <label><input type="checkbox" checked data-cat="crypto"> Crypto</label>
+    <label><input type="checkbox" checked data-cat="politics"> Politics</label>
+    <label><input type="checkbox" checked data-cat="sports"> Sports</label>
+    <label><input type="checkbox" checked data-cat="tech"> Tech</label>
+    <label><input type="checkbox" checked data-cat="culture"> Culture</label>
+    <label><input type="checkbox" checked data-cat="business"> Business</label>
+    <label><input type="checkbox" checked data-cat="world"> World</label>
+    <label><input type="checkbox" checked data-cat="other"> Other</label>
+  </div>
 
-<div class="controls">
-Probability Filter:
-<select id="probFilter">
-<option value="50">50%+</option>
-<option value="60">60%+</option>
-<option value="70">70%+</option>
-<option value="75">75%+</option>
-<option value="80">80%+</option>
-<option value="85">85%+</option>
-<option value="90">90–99.9%</option>
-</select>
-</div>
+  <div class="filters">
+    <strong>Probability Filter:</strong>
+    <select id="probFilter">
+      <option value="50">50%+</option>
+      <option value="60">60%+</option>
+      <option value="70">70%+</option>
+      <option value="75">75%+</option>
+      <option value="80">80%+</option>
+      <option value="85">85%+</option>
+      <option value="90">90%+</option>
+      <option value="95">95%+</option>
+    </select>
+  </div>
 
-<div id="status">Status: Idle</div>
+  <div id="status" class="status">Status: idle</div>
+</div>
 
 <table>
 <thead>
 <tr>
-<th>Select</th>
-<th>Market</th>
-<th>Side</th>
-<th>Prob</th>
-<th>Risk</th>
-<th>Status</th>
-<th>Profit (If Win)</th>
+  <th>Select</th>
+  <th>Market</th>
+  <th>Side</th>
+  <th>Prob</th>
+  <th>Risk</th>
+  <th>Time Left</th>
+  <th>Status</th>
+  <th>Profit (If Win)</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
 </table>
 
-<div class="version">gptbot.html v9</div>
-
 <script>
-let timer = null;
-
 const WORKER = "https://solitary-paper-639a.cryptoworldgames.workers.dev";
+let running = false;
 
-document.getElementById("startBtn").onclick = () => {
-  document.getElementById("startBtn").style.display="none";
-  document.getElementById("stopBtn").style.display="inline-block";
-  scan();
-  timer = setInterval(scan, 60000);
-};
+document.getElementById("startBtn").onclick = startScan;
+document.getElementById("stopBtn").onclick = stopScan;
 
-document.getElementById("stopBtn").onclick = () => {
-  clearInterval(timer);
-  document.getElementById("stopBtn").style.display="none";
-  document.getElementById("startBtn").style.display="inline-block";
-  document.getElementById("status").innerText="Status: Stopped";
-};
+function stopScan() {
+  running = false;
+  document.getElementById("status").textContent = "Status: stopped";
+  document.getElementById("startBtn").style.display = "inline-block";
+  document.getElementById("stopBtn").style.display = "none";
+}
 
-async function scan(){
-  document.getElementById("status").innerText="Status: Scanning...";
+function timeLeft(ts) {
+  const diff = ts - Date.now();
+  if (diff <= 0) return null;
+  const h = Math.floor(diff / 36e5);
+  const d = Math.floor(h / 24);
+  const m = Math.floor((diff % 36e5) / 6e4);
+  return d > 0 ? `${d}d ${h % 24}h` : `${h}h ${m}m`;
+}
+
+async function startScan() {
+  running = true;
+  document.getElementById("rows").innerHTML = "";
+  document.getElementById("status").textContent = "Status: scanning...";
+  document.getElementById("startBtn").style.display = "none";
+  document.getElementById("stopBtn").style.display = "inline-block";
+
   const res = await fetch(`${WORKER}/?url=https://gamma-api.polymarket.com/markets`);
-  const data = await res.json();
-
-  const tbody = document.getElementById("rows");
-  tbody.innerHTML = "";
+  const markets = await res.json();
 
   const minProb = parseInt(document.getElementById("probFilter").value);
+  let shown = 0;
 
-  data.filter(m => m.active).forEach(m => {
-    if(!m.outcomePrices || !m.outcomePrices[0]) return;
+  for (const m of markets) {
+    if (!running) break;
+    if (!m.active) continue;
 
-    const prob = Math.round(parseFloat(m.outcomePrices[0]) * 100);
-    if(prob < minProb) return;
+    const endTs = new Date(m.endDate || m.closeTime || 0).getTime();
+    const remaining = timeLeft(endTs);
+    if (!remaining) continue;
+
+    const prices = m.outcomePrices?.map(p => parseFloat(p));
+    if (!prices || prices.length < 2 || prices.some(isNaN)) continue;
+
+    const yesProb = Math.round(prices[0] * 100);
+    if (yesProb < minProb) continue;
+
+    const riskClass =
+      yesProb >= 95 ? "risk-safe" :
+      yesProb >= 80 ? "risk-mid"  : "risk-high";
 
     const tr = document.createElement("tr");
-
     tr.innerHTML = `
-      <td><input type="checkbox"></td>
-      <td><a target="_blank" href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">${m.question}</a></td>
+      <td><input type="checkbox" onchange="this.closest('tr').classList.toggle('selected', this.checked)"></td>
+      <td><a class="market" target="_blank"
+        href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">
+        ${m.question}</a></td>
       <td>YES</td>
-      <td>${prob}%</td>
-      <td>${riskBars(prob)}</td>
-      <td>${prob >= 90 ? "SAFE" : "RISK"}</td>
-      <td>$1 → $${(1 / (m.outcomePrices[0])).toFixed(2)}</td>
+      <td>${yesProb}%</td>
+      <td class="${riskClass}">${riskClass.replace("risk-","").toUpperCase()}</td>
+      <td>${remaining}</td>
+      <td>READY</td>
+      <td>$1 → $${(1 / prices[0]).toFixed(2)}</td>
     `;
-    tbody.appendChild(tr);
-  });
-
-  document.getElementById("status").innerText="Status: Scan complete";
-}
-
-function riskBars(prob){
-  let bars = Math.round(prob / 20);
-  let html = '<div class="riskbar">';
-  for(let i=0;i<6;i++){
-    html += `<span class="${i<bars ? 'green':'red'}"></span>`;
+    document.getElementById("rows").appendChild(tr);
+    shown++;
   }
-  return html + "</div>";
+
+  document.getElementById("status").textContent =
+    `Status: loaded ${shown} active markets`;
 }
 </script>
+
 </body>
 </html>
