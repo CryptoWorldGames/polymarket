@@ -1,81 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Polymarket GPT Bot Scanner</title>
+<meta charset="UTF-8">
+<title>Polymarket GPT Bot Scanner v8</title>
 <style>
-body { background:#0b0f16;color:#fff;font-family:Arial }
-h1 { color:#4da3ff }
-button { padding:8px 14px;margin:5px }
-table { width:100%; border-collapse:collapse;margin-top:10px }
-th,td { border-bottom:1px solid #222;padding:6px;font-size:14px }
-.safe { color:#00ff7f }
-.risk { color:#ff4d4d }
+body {
+  background:#0b0f14;
+  color:#e6edf3;
+  font-family:Arial, sans-serif;
+  margin:20px;
+}
+h1 { color:#4da3ff; }
+button { padding:6px 12px; cursor:pointer; }
+table {
+  width:100%;
+  border-collapse:collapse;
+  margin-top:12px;
+}
+th, td {
+  border-bottom:1px solid #222;
+  padding:6px;
+  text-align:left;
+}
+th { color:#9fb6cc; }
+a { color:#36d399; text-decoration:none; }
+.risk { color:#ff4d4d; font-weight:bold; }
+.safe { color:#4ade80; font-weight:bold; }
+.version {
+  position:fixed;
+  top:10px;
+  left:10px;
+  color:#888;
+  font-size:12px;
+}
 </style>
 </head>
 
 <body>
 
-<h1>Polymarket GPT Bot Scanner <span style="font-size:14px;">v8</span></h1>
+<div class="version">v8</div>
+
+<h1>Polymarket GPT Bot Scanner <small>v8</small></h1>
 <p>Research-first scanner. AI must justify safety.</p>
 
-<button onclick="startScan()">START SCANNER</button>
+<input id="apiKey" type="password" placeholder="Paste OpenAI API key">
+<button onclick="startScanner()">START SCANNER</button>
 
-<div id="status">Status: Idle</div>
+<p id="status">Status: Idle</p>
 
 <table>
 <thead>
 <tr>
+  <th>Select</th>
   <th>Market</th>
+  <th>Side</th>
   <th>Prob</th>
+  <th>Risk</th>
   <th>Status</th>
+  <th>Profit (If Win)</th>
 </tr>
 </thead>
-<tbody id="rows"></tbody>
+<tbody id="results"></tbody>
 </table>
-
-<p style="opacity:.5">v8</p>
 
 <script>
 const WORKER =
-  "https://solitary-paper-639a.cryptoworldgames.workers.dev/?url=";
+  "https://solitary-paper-639a.cryptoworldgames.workers.dev/?url=" +
+  encodeURIComponent("https://gamma-api.polymarket.com/markets");
 
-async function startScan() {
-  document.getElementById("status").innerText = "Status: Scanning...";
-  const res = await fetch(
-    WORKER + encodeURIComponent("https://gamma-api.polymarket.com/markets")
-  );
-  const data = await res.json();
-  render(data.slice(0, 40));
+async function startScanner() {
+  document.getElementById("status").innerText = "Status: Loading markets...";
+  const res = await fetch(WORKER);
+  const markets = await res.json();
+  renderMarkets(markets.slice(0, 20));
+  document.getElementById("status").innerText =
+    "Status: Loaded " + Math.min(20, markets.length) + " markets";
 }
 
-function render(markets) {
-  const rows = document.getElementById("rows");
-  rows.innerHTML = "";
+function renderMarkets(markets) {
+  const tbody = document.getElementById("results");
+  tbody.innerHTML = "";
 
   markets.forEach(m => {
-    const yes = parseFloat(m.outcomePrices?.[0] || 0);
-    const prob = Math.round(yes * 1000) / 10;
-    const safe = prob >= 95;
+    const price = m.outcomePrices?.[0];
+    const prob = price ? Math.round(price * 100) : "NaN";
 
-    rows.innerHTML += `
-      <tr>
-        <td>
-          <a href="https://polymarket.com/search?_q=${encodeURIComponent(m.slug)}"
-             target="_blank" style="color:#2dd4bf">
-            ${m.question}
-          </a>
-        </td>
-        <td>${prob}%</td>
-        <td class="${safe ? "safe" : "risk"}">
-          ${safe ? "SAFE" : "RISK"}
-        </td>
-      </tr>
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="checkbox"></td>
+      <td><a href="https://polymarket.com/market/${m.slug}" target="_blank">
+        ${m.question}</a></td>
+      <td>YES</td>
+      <td>${prob}%</td>
+      <td class="risk">RISK</td>
+      <td>PENDING</td>
+      <td>$1 → $${price ? Math.round(1 / price) : "?"}</td>
     `;
+    tbody.appendChild(tr);
   });
-
-  document.getElementById("status").innerText =
-    "Status: Loaded " + markets.length + " markets";
 }
 </script>
 
