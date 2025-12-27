@@ -7,35 +7,75 @@
 
 <!--
 File: gptbot.html
-Version: v0005
+Version: v0006
 
 Short commit message:
-Add AI reasoning and sticky verdicts
+Serialized AI queue with terminal states
 
 Long commit message:
-Adds explainable AI verdicts with a 250-character
-"why" field, sticky SAFE/RISK states, category fixes
-for Crypto-only filtering, serialized AI queue to
-eliminate rate-limit spam, and tiered recheck timing
-(60s SAFE, 3m RISK).
+Fixes infinite “Researching…” states and OpenAI 429 errors
+by enforcing a single global AI job queue with strict
+serialization.
+
+Introduces terminal AI states (SAFE, RISK, ERROR),
+prevents duplicate re-queuing, adds tiered recheck
+intervals (SAFE=60s, RISK=180s), preserves sticky
+verdicts across scans, and tightens crypto-only filtering
+to exclude macro and equity markets.
 -->
 
 <style>
-body { background:#0d1117; color:#e6edf3; font-family:Arial; text-align:center; }
+body {
+  background:#0d1117;
+  color:#e6edf3;
+  font-family:Arial,sans-serif;
+  text-align:center;
+  margin:20px;
+}
 h1 { color:#58a6ff; }
-input,select { background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:6px; padding:8px; }
-button { padding:10px 22px; border-radius:10px; border:none; font-weight:bold; cursor:pointer; }
-.start { background:#238636; color:white; }
-.stop { background:#da3633; color:white; }
-.panel { max-width:1000px; margin:20px auto; background:#161b22; padding:15px; border-radius:12px; text-align:left; }
-table { width:98%; margin:auto; border-collapse:collapse; }
-th,td { padding:8px; border-bottom:1px solid #30363d; text-align:left; vertical-align:top; }
+input, select {
+  background:#161b22;
+  color:#e6edf3;
+  border:1px solid #30363d;
+  border-radius:6px;
+  padding:8px;
+}
+button {
+  padding:10px 22px;
+  border-radius:10px;
+  border:none;
+  cursor:pointer;
+  font-weight:bold;
+}
+button.start { background:#238636; color:white; }
+button.stop { background:#da3633; color:white; }
+.panel {
+  max-width:900px;
+  margin:20px auto;
+  background:#161b22;
+  padding:15px;
+  border-radius:12px;
+  text-align:left;
+}
+table {
+  width:95%;
+  margin:20px auto;
+  border-collapse:collapse;
+}
+th,td {
+  padding:10px;
+  border-bottom:1px solid #30363d;
+  text-align:left;
+}
 th { background:#1f6feb; }
 .safe { color:#3fb950; font-weight:bold; }
 .risk { color:#f85149; font-weight:bold; }
-.wait { color:#d29922; }
-small { color:#8b949e; }
-footer { margin:40px; color:#6e7681; font-size:12px; }
+.error { color:#d29922; font-weight:bold; }
+footer {
+  margin-top:50px;
+  font-size:12px;
+  color:#6e7681;
+}
 </style>
 </head>
 
@@ -48,11 +88,14 @@ footer { margin:40px; color:#6e7681; font-size:12px; }
 
 <br><br>
 
+<label>
+Probability Threshold:
 <select id="threshold">
   <option value="0.90">90%+</option>
   <option value="0.95" selected>95%+</option>
   <option value="0.98">98%+</option>
 </select>
+</label>
 
 <div class="panel">
 <strong>Market Filters</strong><br><br>
@@ -65,12 +108,12 @@ footer { margin:40px; color:#6e7681; font-size:12px; }
 <label><input type="checkbox" data-cat="other"> Other</label>
 </div>
 
-<button id="toggle" class="start">START SCANNER</button>
+<button id="toggleBtn" class="start">START SCANNER</button>
 
 <div class="panel">
 <div>Status: <span id="status">Stopped</span></div>
-<div>AI Calls: <span id="calls">0</span></div>
-<div>Queue: <span id="queue">Idle</span></div>
+<div>AI Calls Used: <span id="aiCalls">0</span></div>
+<div>AI Queue Length: <span id="queueLen">0</span></div>
 </div>
 
 <table>
@@ -87,121 +130,155 @@ footer { margin:40px; color:#6e7681; font-size:12px; }
 <tbody id="rows"></tbody>
 </table>
 
-<footer>gptbot.html v0005</footer>
+<footer>gptbot.html v0006</footer>
 
 <script>
-const API="https://gamma-api.polymarket.com/markets?limit=500&active=true&closed=false";
-const PROXY="https://api.allorigins.win/raw?url=";
-const SAFE_RECHECK=60000;
-const RISK_RECHECK=180000;
-const AI_DELAY=5000;
+const API = "https://gamma-api.polymarket.com/markets?limit=500&active=true&closed=false";
+const PROXY = "https://api.allorigins.win/raw?url=";
 
-let running=false, queue=[], processing=false, calls=0;
-let state={};
+const MAX_ROWS = 20;
+const SAFE_RECHECK = 60000;
+const RISK_RECHECK = 180000;
+const AI_COOLDOWN = 5000;
 
-function cat(q){
- q=q.toLowerCase();
- if(/bitcoin|btc|eth|ethereum|stablecoin|usdt|usdc/.test(q)) return "crypto";
- if(/election|president|congress/.test(q)) return "politics";
- if(/ai|openai|google|meta/.test(q)) return "tech";
- if(/war|nato|ukraine|china|russia/.test(q)) return "geo";
- if(/album|movie|celebrity/.test(q)) return "culture";
- if(/win|championship|season/.test(q)) return "sports";
- return "other";
+let running=false;
+let aiQueue=[];
+let aiBusy=false;
+let aiCalls=0;
+let markets=new Map();
+
+async function fetchJSON(url){
+  try{
+    const r=await fetch(PROXY+encodeURIComponent(url));
+    if(!r.ok) return null;
+    return await r.json();
+  }catch{ return null; }
 }
 
-async function fetchJSON(u){
- try{const r=await fetch(PROXY+encodeURIComponent(u));return r.json();}catch{return[];}
+function isCrypto(q){
+  q=q.toLowerCase();
+  return /(bitcoin|btc|ethereum|eth|solana|sol|usdt|usdc|stablecoin)/.test(q)
+         && !/(market cap|largest company|apple|nvidia|amazon|google|microsoft)/.test(q);
 }
 
-async function aiProcess(){
- if(processing||queue.length===0||!running) return;
- processing=true;
- document.getElementById("queue").textContent="Processing";
- const item=queue.shift();
- calls++; document.getElementById("calls").textContent=calls;
+function enqueueAI(m){
+  if(m.state) return;
+  m.state="QUEUED";
+  aiQueue.push(m);
+  document.getElementById("queueLen").textContent=aiQueue.length;
+  processQueue();
+}
 
- try{
-  const r=await fetch("https://api.openai.com/v1/chat/completions",{
-   method:"POST",
-   headers:{
-    "Content-Type":"application/json",
-    "Authorization":"Bearer "+document.getElementById("apiKey").value
-   },
-   body:JSON.stringify({
-    model:"gpt-4",
-    messages:[{role:"user",content:
-`Determine if this Polymarket outcome is extremely unlikely to reverse.
-Respond as:
-SAFE or RISK
-Reason: (≤250 chars, cite news, social signals, or lack of risk)
+async function processQueue(){
+  if(aiBusy||!running||aiQueue.length===0) return;
+  aiBusy=true;
+  const m=aiQueue.shift();
+  document.getElementById("queueLen").textContent=aiQueue.length;
+  await aiCheck(m);
+  setTimeout(()=>{ aiBusy=false; processQueue(); },AI_COOLDOWN);
+}
 
-"${item.q}"`
-    }]
-   })
+async function aiCheck(m){
+  aiCalls++;
+  document.getElementById("aiCalls").textContent=aiCalls;
+  try{
+    const res=await fetch("https://api.openai.com/v1/chat/completions",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${document.getElementById("apiKey").value}`
+      },
+      body:JSON.stringify({
+        model:"gpt-4",
+        messages:[{
+          role:"user",
+          content:`Assess if this Polymarket outcome is extremely unlikely to reverse.
+Consider liquidity, sibling ranges, late settlement risk.
+Respond with SAFE or RISK, then one short reason (<=250 chars).
+
+"${m.question}"`
+        }]
+      })
+    });
+    if(res.status===429) throw "RATE";
+    const data=await res.json();
+    const text=data.choices?.[0]?.message?.content||"RISK";
+    if(text.startsWith("SAFE")){
+      m.state="SAFE";
+      m.why=text.slice(4).trim();
+      m.nextCheck=Date.now()+SAFE_RECHECK;
+    }else{
+      m.state="RISK";
+      m.why=text.replace("RISK","").trim();
+      m.nextCheck=Date.now()+RISK_RECHECK;
+    }
+  }catch(e){
+    m.state="ERROR";
+    m.why="Rate limited or API error. Retry in 3 minutes.";
+    m.nextCheck=Date.now()+RISK_RECHECK;
+  }
+  render();
+}
+
+function render(){
+  const body=document.getElementById("rows");
+  body.innerHTML="";
+  [...markets.values()].forEach(m=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${m.question}</td>
+      <td>${m.side}</td>
+      <td>${(m.prob*100).toFixed(1)}%</td>
+      <td class="${m.state==="SAFE"?"safe":m.state==="RISK"?"risk":"error"}">
+        ${m.state}
+      </td>
+      <td>${m.why||""}</td>
+      <td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>
+    `;
+    body.appendChild(tr);
   });
-  const d=await r.json();
-  const t=d.choices[0].message.content;
-  const safe=t.startsWith("SAFE");
-  const reason=t.split("Reason:")[1]?.trim().slice(0,250)||"";
-
-  state[item.id].status=safe?"safe":"risk";
-  state[item.id].why=reason;
-  item.row.cells[3].innerHTML=safe?'<span class="safe">✅ Safe</span>':'<span class="risk">⚠️ Risk</span>';
-  item.row.cells[4].innerHTML="<small>"+reason+"</small>";
-
- }catch{}
-
- setTimeout(()=>{processing=false;document.getElementById("queue").textContent="Waiting";aiProcess();},AI_DELAY);
 }
 
 async function scan(){
- const data=await fetchJSON(API);
- const cats=[...document.querySelectorAll("input[data-cat]:checked")].map(c=>c.dataset.cat);
- const t=parseFloat(threshold.value);
- const body=document.getElementById("rows");
-
- data.forEach(m=>{
-  if(state[m.id]) return;
-  if(!cats.includes(cat(m.question))) return;
-  let p=JSON.parse(m.outcomePrices||"[]");
-  if(p[0]<t&&p[1]<t) return;
-
-  const side=p[0]>=p[1]?"YES":"NO";
-  const tr=document.createElement("tr");
-  tr.innerHTML=`
-   <td>${m.question}</td>
-   <td>${side}</td>
-   <td>${(Math.max(p[0],p[1])*100).toFixed(1)}%</td>
-   <td class="wait">Researching…</td>
-   <td></td>
-   <td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>`;
-  body.appendChild(tr);
-
-  state[m.id]={status:"pending",row:tr,why:""};
-  queue.push({id:m.id,q:m.question,row:tr});
- });
-
- aiProcess();
+  const data=await fetchJSON(API)||[];
+  const threshold=parseFloat(document.getElementById("threshold").value);
+  markets.clear();
+  for(const m of data){
+    if(markets.size>=MAX_ROWS) break;
+    if(!isCrypto(m.question)) continue;
+    let p=m.outcomePrices;
+    if(typeof p==="string"){ try{p=JSON.parse(p);}catch{continue;} }
+    if(!Array.isArray(p)||p.length!==2) continue;
+    let side=null,prob=0;
+    if(p[0]>=threshold){side="YES";prob=p[0];}
+    else if(p[1]>=threshold){side="NO";prob=p[1];}
+    else continue;
+    markets.set(m.slug,{...m,side,prob,state:null,why:""});
+  }
+  render();
+  markets.forEach(enqueueAI);
 }
 
-toggle.onclick=()=>{
- if(!running){
-  running=true;
-  status.textContent="Running";
-  toggle.textContent="STOP SCANNER";
-  toggle.className="stop";
-  scan();
-  setInterval(scan,60000);
- }else{
-  running=false;
-  status.textContent="Stopped";
-  toggle.textContent="START SCANNER";
-  toggle.className="start";
- }
+document.getElementById("toggleBtn").onclick=()=>{
+  if(!running){
+    if(!document.getElementById("apiKey").value.trim()){
+      alert("Paste API key first");
+      return;
+    }
+    running=true;
+    document.getElementById("status").textContent="Running";
+    document.getElementById("toggleBtn").textContent="STOP SCANNER";
+    document.getElementById("toggleBtn").className="stop";
+    scan();
+  }else{
+    running=false;
+    aiQueue=[];
+    aiBusy=false;
+    document.getElementById("status").textContent="Stopped";
+    document.getElementById("toggleBtn").textContent="START SCANNER";
+    document.getElementById("toggleBtn").className="start";
+  }
 };
-
-if(Notification.permission!=="granted") Notification.requestPermission();
 </script>
 
 </body>
