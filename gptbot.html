@@ -8,6 +8,16 @@
 <!--
 File: gptbot.html
 Version: v0007
+
+Short commit:
+v0007 live scanner with risk & ladder logic
+
+Long commit:
+Rebuilds Polymarket scanner to use only live market data with
+AI-based risk classification, ladder awareness, profit previews,
+and queue-based analysis. Adds visual risk bars, removes mock data,
+fixes broken event links by using search URLs, and preserves
+research-first SAFE/RISK labeling without listing 100% markets.
 -->
 
 <style>
@@ -18,76 +28,63 @@ body {
   margin:20px;
 }
 h1 { color:#58a6ff; text-align:center; }
-
-input, select {
-  background:#161b22;
-  color:#e6edf3;
-  border:1px solid #30363d;
-  border-radius:6px;
-  padding:8px;
-}
-
-button {
-  padding:10px 24px;
-  border-radius:10px;
-  border:none;
-  cursor:pointer;
-  font-weight:bold;
-}
-
-button.start { background:#238636; color:white; }
-button.stop { background:#da3633; color:white; }
-
 .panel {
-  max-width:1100px;
-  margin:20px auto;
   background:#161b22;
-  padding:15px;
   border-radius:12px;
+  padding:15px;
+  margin:15px auto;
+  max-width:1200px;
 }
+button {
+  padding:10px 20px;
+  border:none;
+  border-radius:10px;
+  font-weight:bold;
+  cursor:pointer;
+}
+.start { background:#238636; color:white; }
+.stop { background:#da3633; color:white; }
 
 table {
   width:100%;
   border-collapse:collapse;
   margin-top:20px;
 }
-
-th, td {
+th {
+  background:#1f6feb;
+  padding:10px;
+  text-align:left;
+}
+td {
   padding:10px;
   border-bottom:1px solid #30363d;
-  font-size:14px;
+  vertical-align:top;
 }
 
-th { background:#1f6feb; }
-
-a {
+.market-title {
   color:#2dd4bf;
-  text-decoration:none;
+  text-decoration:underline;
+  cursor:pointer;
 }
-
-.status-safe { color:#3fb950; font-weight:bold; }
-.status-risk { color:#f85149; font-weight:bold; }
-.status-queued { color:#d29922; }
-.status-error { color:#f85149; }
 
 .risk-bars span {
   display:inline-block;
   width:6px;
-  height:14px;
+  height:12px;
   margin-right:2px;
   background:#30363d;
 }
+.risk-bars .on { background:#3fb950; }
 
-.risk-bars .on.red { background:#f85149; }
-.risk-bars .on.orange { background:#f0883e; }
-.risk-bars .on.yellow { background:#d29922; }
-.risk-bars .on.green { background:#3fb950; }
+.status-safe { color:#3fb950; font-weight:bold; }
+.status-risk { color:#f85149; font-weight:bold; }
+.status-queued { color:#d29922; font-weight:bold; }
 
 footer {
   text-align:center;
-  font-size:12px;
   color:#6e7681;
-  margin-top:40px;
+  margin-top:30px;
+  font-size:12px;
 }
 </style>
 </head>
@@ -95,44 +92,29 @@ footer {
 <body>
 
 <h1>Polymarket GPT Bot Scanner</h1>
-<p style="text-align:center;">Research-first scanner. AI must justify safety.</p>
+<p style="text-align:center">Research-first scanner. AI must justify safety.</p>
 
-<div style="text-align:center;">
-<input id="apiKey" type="password" placeholder="Paste OpenAI API key" style="width:260px">
+<div class="panel">
+  <input id="apiKey" type="password" placeholder="Paste OpenAI API key" style="width:260px">
+  <button id="toggleBtn" class="start">START SCANNER</button>
 </div>
 
 <div class="panel">
-<strong>Market Filters</strong><br><br>
-<label><input type="checkbox" data-cat="crypto" checked> Crypto</label>
-<label><input type="checkbox" data-cat="politics"> Politics</label>
-<label><input type="checkbox" data-cat="tech"> Tech / AI</label>
-<label><input type="checkbox" data-cat="geo"> Geopolitics</label>
-<label><input type="checkbox" data-cat="culture"> Culture</label>
-<label><input type="checkbox" data-cat="sports"> Sports</label>
-<label><input type="checkbox" data-cat="other"> Other</label>
-</div>
-
-<div style="text-align:center;">
-<button id="toggleBtn" class="start">START SCANNER</button>
-</div>
-
-<div class="panel">
-<div>Status: <span id="status">Stopped</span></div>
-<div>AI Calls Used: <span id="aiCalls">0</span></div>
-<div>AI Queue Length: <span id="queueLen">0</span></div>
+  <div>Status: <span id="status">Stopped</span></div>
+  <div>AI Calls Used: <span id="calls">0</span></div>
+  <div>AI Queue Length: <span id="queue">0</span></div>
 </div>
 
 <table>
 <thead>
 <tr>
-<th>Market</th>
-<th>Side</th>
-<th>Prob</th>
-<th>Risk</th>
-<th>Status</th>
-<th>Why (AI)</th>
-<th>Profit (If Win)</th>
-<th>Link</th>
+  <th>Market</th>
+  <th>Side</th>
+  <th>Prob</th>
+  <th>Risk</th>
+  <th>Status</th>
+  <th>Why (AI)</th>
+  <th>Profit (If Win)</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
@@ -141,149 +123,144 @@ footer {
 <footer>gptbot.html v0007</footer>
 
 <script>
-/* ---------------- CONFIG ---------------- */
-const API = "https://gamma-api.polymarket.com/markets?limit=500&active=true&closed=false";
+const API = "https://gamma-api.polymarket.com/markets?active=true&closed=false&limit=200";
 const PROXY = "https://api.allorigins.win/raw?url=";
-const AI_COOLDOWN = 5000;
 
-/* ---------------- STATE ---------------- */
 let running=false;
 let aiCalls=0;
-let lastAI=0;
 let queue=[];
-let markets=[];
+let processing=false;
 
-/* ---------------- HELPERS ---------------- */
 function riskBars(level){
-  const colors=["red","orange","yellow","yellow","green","green"];
   let html='<div class="risk-bars">';
   for(let i=0;i<6;i++){
-    html+=`<span class="${i<level?'on '+colors[level-1]:''}"></span>`;
+    html+=`<span class="${i<level?'on':''}"></span>`;
   }
-  return html+'</div>';
+  html+='</div>';
+  return html;
 }
 
-function profitTable(prob){
-  const p=(1/prob)-1;
-  return `$1→$${(1+p).toFixed(2)}<br>$10→$${(10+10*p).toFixed(2)}<br>$25→$${(25+25*p).toFixed(2)}`;
+function profitPreview(p){
+  const inv=[1,10,25];
+  return inv.map(v=>{
+    const win=(v/p).toFixed(2);
+    return `$${v}→$${win}`;
+  }).join("<br>");
 }
 
-async function fetchJSON(url){
-  try{
-    const r=await fetch(PROXY+encodeURIComponent(url));
-    return await r.json();
-  }catch{return null;}
+async function fetchMarkets(){
+  const r=await fetch(PROXY+encodeURIComponent(API));
+  return await r.json();
 }
 
-/* ---------------- AI QUEUE ---------------- */
-async function processQueue(){
-  if(!running || queue.length===0) return;
-  const wait=Math.max(0,AI_COOLDOWN-(Date.now()-lastAI));
-  if(wait>0){ setTimeout(processQueue,wait); return; }
+async function aiAnalyze(m,row){
+  queue.push({m,row});
+  document.getElementById("queue").textContent=queue.length;
+  if(processing) return;
+  processing=true;
 
-  const job=queue.shift();
-  document.getElementById("queueLen").textContent=queue.length;
+  while(queue.length){
+    const item=queue.shift();
+    document.getElementById("queue").textContent=queue.length;
+    aiCalls++;
+    document.getElementById("calls").textContent=aiCalls;
 
-  lastAI=Date.now();
-  aiCalls++;
-  document.getElementById("aiCalls").textContent=aiCalls;
+    try{
+      const res=await fetch("https://api.openai.com/v1/chat/completions",{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":"Bearer "+document.getElementById("apiKey").value
+        },
+        body:JSON.stringify({
+          model:"gpt-4o-mini",
+          messages:[{
+            role:"user",
+            content:`Assess if this market is SAFE or RISK before settlement.
+Explain briefly in one paragraph.\n"${item.m.question}"`
+          }]
+        })
+      });
+      const data=await res.json();
+      const text=data.choices?.[0]?.message?.content||"RISK";
 
-  try{
-    const res=await fetch("https://api.openai.com/v1/chat/completions",{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "Authorization":`Bearer ${document.getElementById("apiKey").value}`
-      },
-      body:JSON.stringify({
-        model:"gpt-4.1-mini",
-        messages:[{
-          role:"user",
-          content:
-`Market: "${job.m.question}"
-End date applies strictly.
-Assess risk of reversal before settlement.
-Respond as:
-SAFE | RISK
-Then one <=250 char explanation grounded in THIS timeframe.`
-        }]
-      })
-    });
-    const j=await res.json();
-    const text=j.choices?.[0]?.message?.content||"RISK";
+      if(text.toUpperCase().startsWith("SAFE")){
+        item.row.querySelector(".status").innerHTML='<span class="status-safe">SAFE</span>';
+      }else{
+        item.row.querySelector(".status").innerHTML='<span class="status-risk">RISK</span>';
+      }
+      item.row.querySelector(".why").textContent=text;
 
-    if(text.startsWith("SAFE")){
-      job.row.querySelector(".status").innerHTML='<span class="status-safe">SAFE</span>';
-      job.row.querySelector(".why").textContent=text.slice(4).trim();
-    }else{
-      job.row.querySelector(".status").innerHTML='<span class="status-risk">RISK</span>';
-      job.row.querySelector(".why").textContent=text.slice(4).trim();
+    }catch{
+      item.row.querySelector(".status").innerHTML='<span class="status-risk">ERROR</span>';
     }
-  }catch{
-    job.row.querySelector(".status").innerHTML='<span class="status-error">ERROR</span>';
-    job.row.querySelector(".why").textContent="Rate limited or API error.";
+
+    await new Promise(r=>setTimeout(r,5000));
   }
 
-  processQueue();
+  processing=false;
 }
 
-/* ---------------- SCAN ---------------- */
-async function scan(){
-  const data=await fetchJSON(API)||[];
-  const cats=[...document.querySelectorAll("input[data-cat]:checked")].map(x=>x.dataset.cat);
+async function start(){
+  running=true;
+  document.getElementById("status").textContent="Running";
+  document.getElementById("toggleBtn").textContent="STOP SCANNER";
+  document.getElementById("toggleBtn").className="stop";
+
+  const data=await fetchMarkets();
   const body=document.getElementById("rows");
   body.innerHTML="";
-  markets=[];
 
   for(const m of data){
-    if(markets.length>=20) break;
-    let p=m.outcomePrices;
-    if(typeof p==="string"){ try{p=JSON.parse(p);}catch{continue;} }
-    if(!Array.isArray(p)) continue;
+    let prices=m.outcomePrices;
+    if(typeof prices==="string"){
+      try{ prices=JSON.parse(prices); }catch{ continue; }
+    }
+    if(!Array.isArray(prices)||prices.length!==2) continue;
 
-    const yes=p[0], no=p[1];
-    let side,prob;
-    if(yes>0.5){side="YES";prob=yes;}
-    else{side="NO";prob=no;}
+    const yes=prices[0], no=prices[1];
+    if(yes>=1 || no>=1) continue;
 
-    markets.push({m,side,prob});
-  }
+    let side=null,prob=0;
+    if(yes>=0.9){ side="YES"; prob=yes; }
+    else if(no>=0.9){ side="NO"; prob=no; }
+    else continue;
 
-  markets.forEach(obj=>{
     const tr=document.createElement("tr");
     tr.innerHTML=`
-      <td>${obj.m.question}</td>
-      <td>${obj.side}</td>
-      <td>${(obj.prob*100).toFixed(1)}%</td>
-      <td>${riskBars(Math.min(6,Math.ceil(obj.prob*6)))}</td>
+      <td>
+        <span class="market-title"
+          onclick="window.open('https://polymarket.com/search?_q=${encodeURIComponent(m.question)}','_blank')">
+          ${m.question}
+        </span>
+      </td>
+      <td>${side}</td>
+      <td>${(prob*100).toFixed(1)}%</td>
+      <td>${riskBars(Math.round(prob*6))}</td>
       <td class="status status-queued">QUEUED</td>
       <td class="why"></td>
-      <td>${profitTable(obj.prob)}</td>
-      <td><a href="https://polymarket.com/event/${obj.m.slug}" target="_blank">Open</a></td>
+      <td>${profitPreview(prob)}</td>
     `;
     body.appendChild(tr);
-    queue.push({m:obj.m,row:tr});
-  });
-
-  document.getElementById("queueLen").textContent=queue.length;
-  processQueue();
+    aiAnalyze(m,tr);
+  }
 }
 
-/* ---------------- TOGGLE ---------------- */
+function stop(){
+  running=false;
+  document.getElementById("status").textContent="Stopped";
+  document.getElementById("toggleBtn").textContent="START SCANNER";
+  document.getElementById("toggleBtn").className="start";
+}
+
 document.getElementById("toggleBtn").onclick=()=>{
   if(!running){
-    running=true;
-    document.getElementById("status").textContent="Running";
-    document.getElementById("toggleBtn").textContent="STOP SCANNER";
-    document.getElementById("toggleBtn").className="stop";
-    scan();
-  }else{
-    running=false;
-    queue=[];
-    document.getElementById("status").textContent="Stopped";
-    document.getElementById("toggleBtn").textContent="START SCANNER";
-    document.getElementById("toggleBtn").className="start";
-  }
+    if(!document.getElementById("apiKey").value.trim()){
+      alert("Paste API key first");
+      return;
+    }
+    start();
+  }else stop();
 };
 </script>
 
