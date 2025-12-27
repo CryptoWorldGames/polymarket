@@ -7,21 +7,7 @@
 
 <!--
 File: gptbot.html
-Version: v0006
-
-Short commit message:
-Serialized AI queue with terminal states
-
-Long commit message:
-Fixes infinite “Researching…” states and OpenAI 429 errors
-by enforcing a single global AI job queue with strict
-serialization.
-
-Introduces terminal AI states (SAFE, RISK, ERROR),
-prevents duplicate re-queuing, adds tiered recheck
-intervals (SAFE=60s, RISK=180s), preserves sticky
-verdicts across scans, and tightens crypto-only filtering
-to exclude macro and equity markets.
+Version: v0007
 -->
 
 <style>
@@ -29,10 +15,10 @@ body {
   background:#0d1117;
   color:#e6edf3;
   font-family:Arial,sans-serif;
-  text-align:center;
   margin:20px;
 }
-h1 { color:#58a6ff; }
+h1 { color:#58a6ff; text-align:center; }
+
 input, select {
   background:#161b22;
   color:#e6edf3;
@@ -40,41 +26,68 @@ input, select {
   border-radius:6px;
   padding:8px;
 }
+
 button {
-  padding:10px 22px;
+  padding:10px 24px;
   border-radius:10px;
   border:none;
   cursor:pointer;
   font-weight:bold;
 }
+
 button.start { background:#238636; color:white; }
 button.stop { background:#da3633; color:white; }
+
 .panel {
-  max-width:900px;
+  max-width:1100px;
   margin:20px auto;
   background:#161b22;
   padding:15px;
   border-radius:12px;
-  text-align:left;
 }
+
 table {
-  width:95%;
-  margin:20px auto;
+  width:100%;
   border-collapse:collapse;
+  margin-top:20px;
 }
-th,td {
+
+th, td {
   padding:10px;
   border-bottom:1px solid #30363d;
-  text-align:left;
+  font-size:14px;
 }
+
 th { background:#1f6feb; }
-.safe { color:#3fb950; font-weight:bold; }
-.risk { color:#f85149; font-weight:bold; }
-.error { color:#d29922; font-weight:bold; }
+
+a {
+  color:#2dd4bf;
+  text-decoration:none;
+}
+
+.status-safe { color:#3fb950; font-weight:bold; }
+.status-risk { color:#f85149; font-weight:bold; }
+.status-queued { color:#d29922; }
+.status-error { color:#f85149; }
+
+.risk-bars span {
+  display:inline-block;
+  width:6px;
+  height:14px;
+  margin-right:2px;
+  background:#30363d;
+}
+
+.risk-bars .on.red { background:#f85149; }
+.risk-bars .on.orange { background:#f0883e; }
+.risk-bars .on.yellow { background:#d29922; }
+.risk-bars .on.green { background:#3fb950; }
+
 footer {
-  margin-top:50px;
+  text-align:center;
   font-size:12px;
   color:#6e7681;
+  margin-top:40px;
 }
 </style>
 </head>
@@ -82,20 +95,11 @@ footer {
 <body>
 
 <h1>Polymarket GPT Bot Scanner</h1>
-<p>Research-first scanner. AI must justify safety.</p>
+<p style="text-align:center;">Research-first scanner. AI must justify safety.</p>
 
+<div style="text-align:center;">
 <input id="apiKey" type="password" placeholder="Paste OpenAI API key" style="width:260px">
-
-<br><br>
-
-<label>
-Probability Threshold:
-<select id="threshold">
-  <option value="0.90">90%+</option>
-  <option value="0.95" selected>95%+</option>
-  <option value="0.98">98%+</option>
-</select>
-</label>
+</div>
 
 <div class="panel">
 <strong>Market Filters</strong><br><br>
@@ -108,7 +112,9 @@ Probability Threshold:
 <label><input type="checkbox" data-cat="other"> Other</label>
 </div>
 
+<div style="text-align:center;">
 <button id="toggleBtn" class="start">START SCANNER</button>
+</div>
 
 <div class="panel">
 <div>Status: <span id="status">Stopped</span></div>
@@ -122,65 +128,66 @@ Probability Threshold:
 <th>Market</th>
 <th>Side</th>
 <th>Prob</th>
+<th>Risk</th>
 <th>Status</th>
 <th>Why (AI)</th>
+<th>Profit (If Win)</th>
 <th>Link</th>
 </tr>
 </thead>
 <tbody id="rows"></tbody>
 </table>
 
-<footer>gptbot.html v0006</footer>
+<footer>gptbot.html v0007</footer>
 
 <script>
+/* ---------------- CONFIG ---------------- */
 const API = "https://gamma-api.polymarket.com/markets?limit=500&active=true&closed=false";
 const PROXY = "https://api.allorigins.win/raw?url=";
-
-const MAX_ROWS = 20;
-const SAFE_RECHECK = 60000;
-const RISK_RECHECK = 180000;
 const AI_COOLDOWN = 5000;
 
+/* ---------------- STATE ---------------- */
 let running=false;
-let aiQueue=[];
-let aiBusy=false;
 let aiCalls=0;
-let markets=new Map();
+let lastAI=0;
+let queue=[];
+let markets=[];
+
+/* ---------------- HELPERS ---------------- */
+function riskBars(level){
+  const colors=["red","orange","yellow","yellow","green","green"];
+  let html='<div class="risk-bars">';
+  for(let i=0;i<6;i++){
+    html+=`<span class="${i<level?'on '+colors[level-1]:''}"></span>`;
+  }
+  return html+'</div>';
+}
+
+function profitTable(prob){
+  const p=(1/prob)-1;
+  return `$1→$${(1+p).toFixed(2)}<br>$10→$${(10+10*p).toFixed(2)}<br>$25→$${(25+25*p).toFixed(2)}`;
+}
 
 async function fetchJSON(url){
   try{
     const r=await fetch(PROXY+encodeURIComponent(url));
-    if(!r.ok) return null;
     return await r.json();
-  }catch{ return null; }
+  }catch{return null;}
 }
 
-function isCrypto(q){
-  q=q.toLowerCase();
-  return /(bitcoin|btc|ethereum|eth|solana|sol|usdt|usdc|stablecoin)/.test(q)
-         && !/(market cap|largest company|apple|nvidia|amazon|google|microsoft)/.test(q);
-}
-
-function enqueueAI(m){
-  if(m.state) return;
-  m.state="QUEUED";
-  aiQueue.push(m);
-  document.getElementById("queueLen").textContent=aiQueue.length;
-  processQueue();
-}
-
+/* ---------------- AI QUEUE ---------------- */
 async function processQueue(){
-  if(aiBusy||!running||aiQueue.length===0) return;
-  aiBusy=true;
-  const m=aiQueue.shift();
-  document.getElementById("queueLen").textContent=aiQueue.length;
-  await aiCheck(m);
-  setTimeout(()=>{ aiBusy=false; processQueue(); },AI_COOLDOWN);
-}
+  if(!running || queue.length===0) return;
+  const wait=Math.max(0,AI_COOLDOWN-(Date.now()-lastAI));
+  if(wait>0){ setTimeout(processQueue,wait); return; }
 
-async function aiCheck(m){
+  const job=queue.shift();
+  document.getElementById("queueLen").textContent=queue.length;
+
+  lastAI=Date.now();
   aiCalls++;
   document.getElementById("aiCalls").textContent=aiCalls;
+
   try{
     const res=await fetch("https://api.openai.com/v1/chat/completions",{
       method:"POST",
@@ -189,82 +196,82 @@ async function aiCheck(m){
         "Authorization":`Bearer ${document.getElementById("apiKey").value}`
       },
       body:JSON.stringify({
-        model:"gpt-4",
+        model:"gpt-4.1-mini",
         messages:[{
           role:"user",
-          content:`Assess if this Polymarket outcome is extremely unlikely to reverse.
-Consider liquidity, sibling ranges, late settlement risk.
-Respond with SAFE or RISK, then one short reason (<=250 chars).
-
-"${m.question}"`
+          content:
+`Market: "${job.m.question}"
+End date applies strictly.
+Assess risk of reversal before settlement.
+Respond as:
+SAFE | RISK
+Then one <=250 char explanation grounded in THIS timeframe.`
         }]
       })
     });
-    if(res.status===429) throw "RATE";
-    const data=await res.json();
-    const text=data.choices?.[0]?.message?.content||"RISK";
+    const j=await res.json();
+    const text=j.choices?.[0]?.message?.content||"RISK";
+
     if(text.startsWith("SAFE")){
-      m.state="SAFE";
-      m.why=text.slice(4).trim();
-      m.nextCheck=Date.now()+SAFE_RECHECK;
+      job.row.querySelector(".status").innerHTML='<span class="status-safe">SAFE</span>';
+      job.row.querySelector(".why").textContent=text.slice(4).trim();
     }else{
-      m.state="RISK";
-      m.why=text.replace("RISK","").trim();
-      m.nextCheck=Date.now()+RISK_RECHECK;
+      job.row.querySelector(".status").innerHTML='<span class="status-risk">RISK</span>';
+      job.row.querySelector(".why").textContent=text.slice(4).trim();
     }
-  }catch(e){
-    m.state="ERROR";
-    m.why="Rate limited or API error. Retry in 3 minutes.";
-    m.nextCheck=Date.now()+RISK_RECHECK;
+  }catch{
+    job.row.querySelector(".status").innerHTML='<span class="status-error">ERROR</span>';
+    job.row.querySelector(".why").textContent="Rate limited or API error.";
   }
-  render();
+
+  processQueue();
 }
 
-function render(){
-  const body=document.getElementById("rows");
-  body.innerHTML="";
-  [...markets.values()].forEach(m=>{
-    const tr=document.createElement("tr");
-    tr.innerHTML=`
-      <td>${m.question}</td>
-      <td>${m.side}</td>
-      <td>${(m.prob*100).toFixed(1)}%</td>
-      <td class="${m.state==="SAFE"?"safe":m.state==="RISK"?"risk":"error"}">
-        ${m.state}
-      </td>
-      <td>${m.why||""}</td>
-      <td><a href="https://polymarket.com/event/${m.slug}" target="_blank">Open</a></td>
-    `;
-    body.appendChild(tr);
-  });
-}
-
+/* ---------------- SCAN ---------------- */
 async function scan(){
   const data=await fetchJSON(API)||[];
-  const threshold=parseFloat(document.getElementById("threshold").value);
-  markets.clear();
+  const cats=[...document.querySelectorAll("input[data-cat]:checked")].map(x=>x.dataset.cat);
+  const body=document.getElementById("rows");
+  body.innerHTML="";
+  markets=[];
+
   for(const m of data){
-    if(markets.size>=MAX_ROWS) break;
-    if(!isCrypto(m.question)) continue;
+    if(markets.length>=20) break;
     let p=m.outcomePrices;
     if(typeof p==="string"){ try{p=JSON.parse(p);}catch{continue;} }
-    if(!Array.isArray(p)||p.length!==2) continue;
-    let side=null,prob=0;
-    if(p[0]>=threshold){side="YES";prob=p[0];}
-    else if(p[1]>=threshold){side="NO";prob=p[1];}
-    else continue;
-    markets.set(m.slug,{...m,side,prob,state:null,why:""});
+    if(!Array.isArray(p)) continue;
+
+    const yes=p[0], no=p[1];
+    let side,prob;
+    if(yes>0.5){side="YES";prob=yes;}
+    else{side="NO";prob=no;}
+
+    markets.push({m,side,prob});
   }
-  render();
-  markets.forEach(enqueueAI);
+
+  markets.forEach(obj=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`
+      <td>${obj.m.question}</td>
+      <td>${obj.side}</td>
+      <td>${(obj.prob*100).toFixed(1)}%</td>
+      <td>${riskBars(Math.min(6,Math.ceil(obj.prob*6)))}</td>
+      <td class="status status-queued">QUEUED</td>
+      <td class="why"></td>
+      <td>${profitTable(obj.prob)}</td>
+      <td><a href="https://polymarket.com/event/${obj.m.slug}" target="_blank">Open</a></td>
+    `;
+    body.appendChild(tr);
+    queue.push({m:obj.m,row:tr});
+  });
+
+  document.getElementById("queueLen").textContent=queue.length;
+  processQueue();
 }
 
+/* ---------------- TOGGLE ---------------- */
 document.getElementById("toggleBtn").onclick=()=>{
   if(!running){
-    if(!document.getElementById("apiKey").value.trim()){
-      alert("Paste API key first");
-      return;
-    }
     running=true;
     document.getElementById("status").textContent="Running";
     document.getElementById("toggleBtn").textContent="STOP SCANNER";
@@ -272,8 +279,7 @@ document.getElementById("toggleBtn").onclick=()=>{
     scan();
   }else{
     running=false;
-    aiQueue=[];
-    aiBusy=false;
+    queue=[];
     document.getElementById("status").textContent="Stopped";
     document.getElementById("toggleBtn").textContent="START SCANNER";
     document.getElementById("toggleBtn").className="start";
