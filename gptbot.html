@@ -2,6 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+
+<!-- CACHE BUSTING -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
 <title>Polymarket GPT Bot Scanner v9</title>
 
 <style>
@@ -94,7 +100,7 @@ a.market {
 
   <div class="filters">
     <strong>Categories:</strong>
-    Crypto Politics Sports Tech Culture Business World Other
+    Crypto · Politics · Sports · Tech · Culture · Business · World · Other
   </div>
 
   <div class="filters">
@@ -162,16 +168,15 @@ async function startScan() {
 
   for (const m of markets) {
     if (!running) break;
-    if (!m.active || m.closed) continue;
-    if (!m.endDate) continue;
+    if (!m.active || m.closed || !m.endDate) continue;
 
-    const remainingMs = new Date(m.endDate) - new Date();
-    if (remainingMs > 14 * 24 * 60 * 60 * 1000) continue;
+    const remaining = new Date(m.endDate) - new Date();
+    if (remaining > 14 * 24 * 60 * 60 * 1000) continue;
 
-    const priceYes = m.outcomePrices?.[0];
-    if (typeof priceYes !== "number") continue;
+    const yesPrice = m.outcomePrices?.[0];
+    if (typeof yesPrice !== "number") continue;
 
-    const prob = Math.round((1 - priceYes) * 100);
+    const prob = Math.round((1 - yesPrice) * 100);
     if (prob < minProb) continue;
 
     const risk =
@@ -184,9 +189,11 @@ async function startScan() {
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><a class="market" target="_blank"
+      <td>
+        <a class="market" target="_blank"
         href="https://polymarket.com/search?_q=${encodeURIComponent(m.question)}">
-        ${m.question}</a></td>
+        ${m.question}</a>
+      </td>
       <td>YES</td>
       <td>${prob}%</td>
       <td class="${riskClass}">${risk}</td>
